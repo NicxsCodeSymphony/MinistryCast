@@ -16,7 +16,7 @@ const navItems = [
     },
     {
         label: "Songs",
-        to: "/",
+        to: "/songs",
         icon: SongsIcon,
         iconProps: { width: 12, height: 18 },
     },
@@ -42,7 +42,7 @@ const navItems = [
 
 export default function Sidebar({ iconHeight = 40, iconWidth = 40 }) {
     return (
-        <div className="w-[260px] h-screen bg-[#181717] text-white fixed left-0 top-0 py-[24px] px-[12px]">
+        <div className="w-[260px] h-screen bg-[#181717] text-white fixed left-0 top-0 py-[24px]">
             <div className="flex flex-row gap-[12px] items-center justify-center">
                 <div className={`w-[${iconWidth}px] h-[${iconHeight}px]`}>
                     <MinistryCastIcon height={iconHeight} width={iconWidth} />

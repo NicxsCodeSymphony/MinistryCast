@@ -6,6 +6,7 @@ import WelcomePage from "./(public)/Welcome";
 import Dashboard from "./(private)/pages/Dashboard";
 import PrivateLayout from "./(private)/layout/PrivateLayout";
 import Setlists from "./(private)/pages/Setlists";
+import Songs from "./(private)/pages/Songs";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -16,6 +17,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <Route element={<PrivateLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/setlists" element={<Setlists />} />
+          <Route path="/songs" element={<Songs />} />
         </Route>
       </Routes>
     </BrowserRouter>
