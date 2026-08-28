@@ -1,38 +1,66 @@
-import { SearchIcon, OfflineIcon, NotificationBellIcon} from "../../components/icons"
+type HeaderProps = {
+  searchPlaceholder?: string;
+};
 
-const Header = () => {
-    return(
-        <header className="w-full h-[64px] border-b border-white/10  flex flex-row items-center justify-between px-[24px]">
-                    <div className="bg-[#1C1B1B] rounded-full border border-white/10 w-[256px] h-[34px] flex items-center  pl-[12px]">
-                        <SearchIcon />
+export default function Header({
+  searchPlaceholder = "Search service items...",
+}: HeaderProps) {
+  return (
+    <header className="h-16 shrink-0 sticky top-0 z-40 bg-surface/50 backdrop-blur-lg border-b border-white/5 flex justify-between items-center gap-4 px-4 sm:px-6">
+      <div className="flex items-center gap-4 lg:gap-8 min-w-0 flex-1">
+        <div className="relative group w-full max-w-md min-w-0">
+          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors text-[20px]">
+            search
+          </span>
+          <input
+            className="w-full bg-surface-container border border-white/10 rounded-full pl-10 pr-4 py-1.5 text-sm text-on-surface focus:outline-none focus:border-primary transition-all placeholder:text-on-surface-variant/40"
+            placeholder={searchPlaceholder}
+            type="text"
+          />
+        </div>
 
-                        <input className="w-full h-full bg-transparent border-none outline-none text-white text-[14px] text-[#6B7280]" placeholder="Search" />
-                    </div>
+        <nav className="hidden md:flex gap-6 items-center shrink-0">
+          <a
+            className="text-sm text-on-surface-variant hover:text-primary transition-colors whitespace-nowrap"
+            href="#"
+          >
+            Live View
+          </a>
+          <a
+            className="text-sm text-on-surface-variant hover:text-primary transition-colors whitespace-nowrap"
+            href="#"
+          >
+            Stage Monitor
+          </a>
+        </nav>
+      </div>
 
-                    <div className="flex gap-[16px] items-center h-[36px]">
-                        <div className="bg-[#E9C349]/10 text-[#E9C349] rounded-full border border-[#E9C349]/20 w-[170px] h-[30px] flex items-center justify-center gap-[8px]">
-                            <OfflineIcon />
-                            <h4 className="text-[12px] font-medium">Sync Status (Offline)</h4>
-                        </div>
-                        
-                        <div className="w-[32px] h-full  flex items-center justify-center">
-                            <NotificationBellIcon />
-                        </div>
+      <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full text-xs text-on-surface-variant">
+          <span className="material-symbols-outlined filled text-primary text-[16px]">
+            cloud_done
+          </span>
+          <span>Sync Status</span>
+        </div>
 
-                        <div className="h-full w-[17px]">
-                            <div className="w-[1px] border border-white/10 h-full"></div>
-                        </div>
+        <button
+          type="button"
+          className="bg-gradient-to-r from-primary to-secondary text-on-primary px-3 sm:px-4 py-1.5 rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 transition-all whitespace-nowrap"
+        >
+          Start Presentation
+        </button>
 
-                        <div className="w-[140px] h-full flex items-center justify-center rounded-[8px]" style={{ background: 'linear-gradient(90deg, #9BCBFF 0%, #7900CD 100%)' }}>
-                            <h4 className="text-[12px] text-[#003256] font-bold">Start Presentation</h4>
-                        </div>
+        <button
+          type="button"
+          className="p-2 text-on-surface-variant hover:text-on-surface"
+        >
+          <span className="material-symbols-outlined">notifications</span>
+        </button>
 
-                        <div className="h-full w-[32px] rounded-full flex justify-center items-center border border-white/10"></div>
-                    </div>
-
-
-                </header>
-    )
+        <div className="w-8 h-8 rounded-full overflow-hidden border border-white/10 bg-surface-container-high shrink-0">
+          <div className="w-full h-full bg-gradient-to-br from-primary/40 to-secondary/40" />
+        </div>
+      </div>
+    </header>
+  );
 }
-
-export default Header
