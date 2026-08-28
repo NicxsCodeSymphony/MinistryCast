@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import WelcomePage from "./(public)/Welcome";
+import SignUp from "./(public)/SignUp";
 import Dashboard from "./(private)/pages/Dashboard";
 import PrivateLayout from "./(private)/layout/PrivateLayout";
 import Setlists from "./(private)/pages/Setlists";
@@ -18,6 +19,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <Routes>
         <Route path="/" element={<App />} />
         <Route path="/welcome" element={<WelcomePage />} />
+        <Route path="/signup" element={<SignUp />} />
         <Route path="/live" element={<Live />} />
         <Route element={<PrivateLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
