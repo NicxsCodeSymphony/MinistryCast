@@ -274,7 +274,7 @@ export default function AdminAccounts() {
       <ConfirmDialog
         open={confirm === "delete"}
         onClose={() => setConfirm(null)}
-        onConfirm={() => void remove()}
+        onConfirm={() => remove()}
         title="Delete this account?"
         description={`This removes ${selected?.name ?? "the account"} from MinistryCast.`}
         highlight={selected?.name}
@@ -283,7 +283,7 @@ export default function AdminAccounts() {
       <ConfirmDialog
         open={confirm === "suspend"}
         onClose={() => setConfirm(null)}
-        onConfirm={() => void suspend()}
+        onConfirm={() => suspend()}
         title={selected?.status === "disabled" ? "Restore this account?" : "Suspend this account?"}
         description={
           selected?.status === "disabled"

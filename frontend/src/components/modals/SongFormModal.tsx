@@ -6,6 +6,7 @@ import { lookupSongLyrics } from "../../lib/lyricsLookup";
 import { formatDuration } from "../../lib/helpers";
 import type { Category } from "../../lib/types";
 import { lookupYoutubeClip, youtubeVideoId } from "../../lib/youtube";
+import { categoryTone, categoryVisual } from "../../lib/categoryColor";
 import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
 import Modal from "./Modal";
 
@@ -22,7 +23,7 @@ export type SongFormValues = {
   duration: string;
 };
 
-const KEYS = [
+const MAJOR_KEYS = [
   "C",
   "Db",
   "D",
@@ -37,7 +38,24 @@ const KEYS = [
   "B",
 ];
 
+const KEYS = MAJOR_KEYS.flatMap((key) => [key, `${key}m`]);
+
 const TIME_SIGNATURES = ["4/4", "3/4", "6/8", "2/4", "5/4"];
+
+const LYRIC_SECTIONS = [
+  "Intro",
+  "Verse 1",
+  "Pre-Chorus",
+  "Chorus",
+  "Bridge",
+  "Outro",
+] as const;
+
+const LYRICS_PLACEHOLDER = `[Intro]
+
+[Verse 1]
+You are here, moving in our midst...
+I worship You, I worship You...`;
 
 const emptyValues: SongFormValues = {
   title: "",
@@ -84,11 +102,17 @@ export default function SongFormModal({
   const [musicBusy, setMusicBusy] = useState(false);
   const [musicHint, setMusicHint] = useState("");
   const [categories, setCategories] = useState<Category[]>([]);
+  const [saving, setSaving] = useState(false);
   const lastLookupKey = useRef("");
   const lyricsRequest = useRef(0);
   const lastYoutube = useRef("");
   const originKey = useRef("");
-  const musicDirty = useRef({ key: false, bpm: false, signature: false, duration: false });
+  const musicDirty = useRef({
+    key: false,
+    bpm: false,
+    signature: false,
+    duration: false,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -102,6 +126,7 @@ export default function SongFormModal({
     setLyricsEditorOpen(false);
     setMusicBusy(false);
     setMusicHint("");
+    setSaving(false);
     lastYoutube.current = "";
     lyricsRequest.current += 1;
     musicDirty.current = {
@@ -144,21 +169,71 @@ export default function SongFormModal({
     description:
       "This song is not saved. Save it before you leave, or you’ll lose what you typed.",
     onSave: async () => {
-      if (!persistValues.current.title.trim()) return false;
-      await persistSave.current(persistValues.current);
+      if (!persistValues.current.title.trim() || saving) return false;
+      setSaving(true);
+      try {
+        await persistSave.current(persistValues.current);
+      } finally {
+        setSaving(false);
+      }
     },
   });
 
   const closeForm = () => {
+    if (saving) return;
     draft.guard(() => {
       setLyricsEditorOpen(false);
       onClose();
     });
   };
 
+  const submitSong = async () => {
+    if (!values.title.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onSubmit(values);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const insertLyricSection = (label: string) => {
+    const heading = `[${label}]`;
+    const field = lyricsEditorOpen
+      ? lyricsEditorRef.current
+      : lyricsFieldRef.current;
+    setLyricsOrigin("manual");
+    setValues((prev) => {
+      const lyrics = prev.lyrics;
+      const start = field?.selectionStart ?? lyrics.length;
+      const end = field?.selectionEnd ?? lyrics.length;
+      const before = lyrics.slice(0, start);
+      const after = lyrics.slice(end);
+      const prefix =
+        !before || before.endsWith("\n\n")
+          ? ""
+          : before.endsWith("\n")
+            ? "\n"
+            : "\n\n";
+      const suffix = after.startsWith("\n") ? "" : "\n";
+      const next = `${before}${prefix}${heading}${suffix}${after}`;
+      requestAnimationFrame(() => {
+        const cursor = (before + prefix + heading + suffix).length;
+        field?.focus();
+        field?.setSelectionRange(cursor, cursor);
+      });
+      return { ...prev, lyrics: next };
+    });
+  };
+
   const patch = (key: keyof SongFormValues, value: string) => {
     if (key === "lyrics") setLyricsOrigin("manual");
-    if (key === "key" || key === "bpm" || key === "signature" || key === "duration") {
+    if (
+      key === "key" ||
+      key === "bpm" ||
+      key === "signature" ||
+      key === "duration"
+    ) {
       musicDirty.current[key] = true;
     }
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -175,7 +250,8 @@ export default function SongFormModal({
       return;
     }
     const lookupKey = `${title.toLowerCase()}|${artist.toLowerCase()}`;
-    if (!force.lyrics && !force.music && lookupKey === lastLookupKey.current) return;
+    if (!force.lyrics && !force.music && lookupKey === lastLookupKey.current)
+      return;
     const requestId = ++lyricsRequest.current;
     const fillLyrics =
       Boolean(force.lyrics) || !values.lyrics.trim() || lyricsOrigin === "auto";
@@ -193,7 +269,9 @@ export default function SongFormModal({
     }
     try {
       const [lyricsResult, musicResult] = await Promise.allSettled([
-        fillLyrics ? lookupSongLyrics(title, artist, signal) : Promise.resolve(null),
+        fillLyrics
+          ? lookupSongLyrics(title, artist, signal)
+          : Promise.resolve(null),
         fillKey || fillBpm || fillSig
           ? lookupSongMusic(title, artist, signal)
           : Promise.resolve(null),
@@ -206,7 +284,9 @@ export default function SongFormModal({
         if (lyricsResult.status === "fulfilled" && lyricsResult.value) {
           nextLyrics = lyricsResult.value;
           setLyricsOrigin("auto");
-          setLyricsHint("Lyrics filled from a public catalog. Review before saving.");
+          setLyricsHint(
+            "Lyrics filled from a public catalog. Review before saving.",
+          );
         } else if (lyricsResult.status === "rejected") {
           const err = lyricsResult.reason;
           if (!(err instanceof DOMException && err.name === "AbortError")) {
@@ -235,11 +315,16 @@ export default function SongFormModal({
             ? `Filled ${filled.join(", ")} from public catalogs.`
             : "Found the song, but no extra BPM / key / beat to fill.",
         );
-      } else if (musicResult.status === "rejected" && (fillKey || fillBpm || fillSig)) {
+      } else if (
+        musicResult.status === "rejected" &&
+        (fillKey || fillBpm || fillSig)
+      ) {
         const err = musicResult.reason;
         if (!(err instanceof DOMException && err.name === "AbortError")) {
           setMusicHint(
-            err instanceof Error ? err.message : "Could not look up BPM or key.",
+            err instanceof Error
+              ? err.message
+              : "Could not look up BPM or key.",
           );
         }
       }
@@ -289,8 +374,10 @@ export default function SongFormModal({
       .then((clip) => {
         setValues((prev) => ({
           ...prev,
-          title: prev.title.trim() ? prev.title : clip.title ?? prev.title,
-          artist: prev.artist.trim() ? prev.artist : clip.author ?? prev.artist,
+          title: prev.title.trim() ? prev.title : (clip.title ?? prev.title),
+          artist: prev.artist.trim()
+            ? prev.artist
+            : (clip.author ?? prev.artist),
           duration:
             musicDirty.current.duration || prev.duration.trim()
               ? prev.duration
@@ -308,421 +395,493 @@ export default function SongFormModal({
 
   return (
     <>
-    {draft.dialog}
-    <Modal
-      open={open}
-      onClose={closeForm}
-      labelledBy={titleId}
-      describedBy={descId}
-      panelClassName="w-full max-w-4xl max-h-[90vh] rounded-2xl flex flex-col"
-      backdropClassName="bg-black/60 backdrop-blur-sm"
-    >
-      <div className="px-8 py-6 border-b border-white/10 flex justify-between items-center bg-white/5 shrink-0">
-        <div>
-          <h2 id={titleId} className="text-2xl font-semibold text-on-surface">
-            {isEdit ? "Edit Song" : "Add New Song"}
-          </h2>
-          <p id={descId} className="text-sm text-on-surface-variant">
-            Configure details and lyrics for the production queue.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={closeForm}
-          className="text-on-surface-variant hover:text-on-surface transition-colors"
-          aria-label="Close"
-        >
-          <span className="material-symbols-outlined text-3xl">close</span>
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-8 custom-scrollbar min-h-0">
-        <form
-          id="song-form"
-          className="space-y-8"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!values.title.trim()) return;
-            onSubmit(values);
-          }}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2 group">
-              <label
-                htmlFor="song-title"
-                className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
-              >
-                Song Title
-              </label>
-              <input
-                id="song-title"
-                value={values.title}
-                onChange={(event) => patch("title", event.target.value)}
-                className={fieldClass}
-                placeholder="e.g. Way Maker"
-                type="text"
-                autoFocus
-              />
-            </div>
-            <div className="space-y-2 group">
-              <label
-                htmlFor="song-artist"
-                className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
-              >
-                Artist / Composer
-              </label>
-              <input
-                id="song-artist"
-                value={values.artist}
-                onChange={(event) => patch("artist", event.target.value)}
-                className={fieldClass}
-                placeholder="e.g. Sinach"
-                type="text"
-              />
-            </div>
+      {draft.dialog}
+      <Modal
+        open={open}
+        onClose={closeForm}
+        labelledBy={titleId}
+        describedBy={descId}
+        panelClassName="w-full max-w-4xl max-h-[90vh] rounded-2xl flex flex-col"
+        backdropClassName="bg-black/60 backdrop-blur-sm"
+      >
+        <div className="px-8 py-6 border-b border-white/10 flex justify-between items-center bg-white/5 shrink-0">
+          <div>
+            <h2 id={titleId} className="text-2xl font-semibold text-on-surface">
+              {isEdit ? "Edit Song" : "Add New Song"}
+            </h2>
+            <p id={descId} className="text-sm text-on-surface-variant">
+              Configure details and lyrics for the production queue.
+            </p>
           </div>
+          <button
+            type="button"
+            onClick={closeForm}
+            className="text-on-surface-variant hover:text-on-surface transition-colors"
+            aria-label="Close"
+          >
+            <span className="material-symbols-outlined text-3xl">close</span>
+          </button>
+        </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <p className="text-[11px] uppercase tracking-wider text-on-surface-variant opacity-70">
-                Key, BPM & beat
-              </p>
-              {musicBusy ? (
-                <span className="material-symbols-outlined text-[16px] text-primary animate-spin">
-                  progress_activity
+        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar min-h-0">
+          <form
+            id="song-form"
+            className="space-y-8"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitSong();
+            }}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2 group">
+                <label
+                  htmlFor="song-title"
+                  className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
+                >
+                  Song Title
+                </label>
+                <input
+                  id="song-title"
+                  value={values.title}
+                  onChange={(event) => patch("title", event.target.value)}
+                  className={fieldClass}
+                  placeholder="e.g. Goodness of God"
+                  type="text"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-2 group">
+                <label
+                  htmlFor="song-artist"
+                  className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
+                >
+                  Artist / Composer
+                </label>
+                <input
+                  id="song-artist"
+                  value={values.artist}
+                  onChange={(event) => patch("artist", event.target.value)}
+                  className={fieldClass}
+                  placeholder="e.g. Jen Johnson"
+                  type="text"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] uppercase tracking-wider text-on-surface-variant opacity-70">
+                  Key, BPM & beat
+                </p>
+                {musicBusy ? (
+                  <span className="material-symbols-outlined text-[16px] text-primary animate-spin">
+                    progress_activity
+                  </span>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="space-y-2 group">
+                  <label
+                    htmlFor="song-key"
+                    className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
+                  >
+                    Key
+                  </label>
+                  <select
+                    id="song-key"
+                    value={values.key}
+                    onChange={(event) => patch("key", event.target.value)}
+                    className={fieldClass}
+                  >
+                    {KEYS.map((key) => (
+                      <option key={key} value={key}>
+                        {key.endsWith("m")
+                          ? `${key.slice(0, -1)} minor`
+                          : `${key} major`}
+                      </option>
+                    ))}
+                    {values.key && !KEYS.includes(values.key) ? (
+                      <option value={values.key}>{values.key}</option>
+                    ) : null}
+                  </select>
+                </div>
+                <div className="space-y-2 group">
+                  <label
+                    htmlFor="song-bpm"
+                    className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
+                  >
+                    BPM
+                  </label>
+                  <input
+                    id="song-bpm"
+                    value={values.bpm}
+                    onChange={(event) => patch("bpm", event.target.value)}
+                    className={fieldClass}
+                    placeholder="120"
+                    type="number"
+                    min={1}
+                  />
+                </div>
+                <div className="space-y-2 group">
+                  <label
+                    htmlFor="song-signature"
+                    className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
+                  >
+                    Time Sig
+                  </label>
+                  <select
+                    id="song-signature"
+                    value={values.signature}
+                    onChange={(event) => patch("signature", event.target.value)}
+                    className={fieldClass}
+                  >
+                    {TIME_SIGNATURES.map((sig) => (
+                      <option key={sig} value={sig}>
+                        {sig}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2 group">
+                  <label
+                    htmlFor="song-length"
+                    className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
+                  >
+                    Length
+                  </label>
+                  <input
+                    id="song-length"
+                    value={values.duration}
+                    onChange={(event) => patch("duration", event.target.value)}
+                    className={fieldClass}
+                    placeholder="04:32"
+                  />
+                </div>
+                {musicHint ? (
+                  <p className="text-xs text-on-surface-variant col-span-2 md:col-span-4">
+                    {musicHint}
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-2 pt-2">
+                <p className="text-xs font-medium text-primary/80 uppercase tracking-wider">
+                  Category
+                </p>
+                <div
+                  className="flex flex-wrap gap-2"
+                  role="listbox"
+                  aria-label="Category"
+                >
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={!values.categoryId}
+                    onClick={() => patch("categoryId", "")}
+                    className={`h-8 px-3 rounded-full text-xs font-medium border transition-all ${
+                      !values.categoryId
+                        ? "bg-white/15 text-on-surface border-white/30"
+                        : "bg-white/5 text-on-surface-variant border-white/10 hover:bg-white/10"
+                    }`}
+                  >
+                    None
+                  </button>
+                  {categories.map((category) => {
+                    const visual = categoryVisual[categoryTone(category.color)];
+                    const selected = values.categoryId === category.id;
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        onClick={() => patch("categoryId", category.id)}
+                        className={`h-8 px-3 rounded-full text-xs font-medium border inline-flex items-center gap-1.5 transition-all ${
+                          selected
+                            ? `${visual.chip} ring-1 ring-offset-1 ring-offset-[#13131b]`
+                            : "bg-white/5 text-on-surface-variant border-white/10 hover:bg-white/10"
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[14px] leading-none">
+                          {category.icon || "label"}
+                        </span>
+                        {category.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 group">
+              <div className="flex justify-between items-center">
+                <p className="text-xs font-medium text-primary/80 uppercase tracking-wider">
+                  Lyrics & Chord Pro
+                </p>
+                <span className="text-on-surface-variant text-[10px] font-medium bg-white/5 px-2 py-1 rounded">
+                  Markdown Supported
                 </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {LYRIC_SECTIONS.map((label) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => insertLyricSection(label)}
+                    className="h-7 px-2.5 rounded-full text-[11px] font-medium bg-white/5 text-on-surface-variant border border-white/10 hover:bg-primary/15 hover:text-primary hover:border-primary/30 transition-all"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="relative">
+                <textarea
+                  ref={lyricsFieldRef}
+                  id="song-lyrics"
+                  value={values.lyrics}
+                  onChange={(event) => patch("lyrics", event.target.value)}
+                  className={`${fieldClass} min-h-[20rem] px-6 py-4 pr-14 font-mono text-sm leading-relaxed overflow-hidden resize-none`}
+                  placeholder={LYRICS_PLACEHOLDER}
+                  rows={16}
+                />
+                <button
+                  type="button"
+                  onClick={() => setLyricsEditorOpen(true)}
+                  className="absolute top-3 right-3 w-9 h-9 rounded-lg bg-white/5 text-on-surface-variant hover:bg-white/10 hover:text-on-surface border border-white/10 flex items-center justify-center transition-all"
+                  title="Open wide editor"
+                  aria-label="Open wide editor"
+                >
+                  <span className="material-symbols-outlined text-[18px]">
+                    open_in_full
+                  </span>
+                </button>
+              </div>
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={
+                    lyricsBusy || !values.title.trim() || !values.artist.trim()
+                  }
+                  onClick={() => void fillFromCatalog({ lyrics: true })}
+                  className="w-9 h-9 shrink-0 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 border border-primary/20 flex items-center justify-center transition-all disabled:opacity-40 disabled:hover:bg-primary/15"
+                  title="Fill lyrics from title and artist"
+                  aria-label="Fill lyrics from title and artist"
+                >
+                  <span
+                    className={`material-symbols-outlined filled text-[20px] ${
+                      lyricsBusy ? "animate-spin" : ""
+                    }`}
+                  >
+                    {lyricsBusy ? "progress_activity" : "auto_awesome"}
+                  </span>
+                </button>
+              </div>
+              {lyricsHint ? (
+                <p
+                  className={`text-xs ${
+                    lyricsHint.startsWith("Lyrics filled")
+                      ? "text-primary"
+                      : "text-on-surface-variant"
+                  }`}
+                >
+                  {lyricsHint}
+                </p>
               ) : null}
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="space-y-2 group">
-              <label
-                htmlFor="song-key"
-                className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
-              >
-                Key
-              </label>
-              <select
-                id="song-key"
-                value={values.key}
-                onChange={(event) => patch("key", event.target.value)}
-                className={fieldClass}
-              >
-                {KEYS.map((key) => (
-                  <option key={key} value={key}>
-                    {key}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2 group">
-              <label
-                htmlFor="song-bpm"
-                className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
-              >
-                BPM
-              </label>
-              <input
-                id="song-bpm"
-                value={values.bpm}
-                onChange={(event) => patch("bpm", event.target.value)}
-                className={fieldClass}
-                placeholder="120"
-                type="number"
-                min={1}
-              />
-            </div>
-            <div className="space-y-2 group">
-              <label
-                htmlFor="song-signature"
-                className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
-              >
-                Time Sig
-              </label>
-              <select
-                id="song-signature"
-                value={values.signature}
-                onChange={(event) => patch("signature", event.target.value)}
-                className={fieldClass}
-              >
-                {TIME_SIGNATURES.map((sig) => (
-                  <option key={sig} value={sig}>
-                    {sig}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2 group">
-              <label
-                htmlFor="song-length"
-                className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
-              >
-                Length
-              </label>
-              <input
-                id="song-length"
-                value={values.duration}
-                onChange={(event) => patch("duration", event.target.value)}
-                className={fieldClass}
-                placeholder="04:32"
-              />
-            </div>
-            <div className="space-y-2 group">
-              <label
-                htmlFor="song-category"
-                className="block text-xs font-medium text-primary/80 uppercase tracking-wider group-focus-within:text-primary"
-              >
-                Category
-              </label>
-              <select
-                id="song-category"
-                value={values.categoryId}
-                onChange={(event) => patch("categoryId", event.target.value)}
-                className={fieldClass}
-              >
-                <option value="">Uncategorized</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {musicHint ? (
-              <p className="text-xs text-on-surface-variant col-span-2 md:col-span-4">
-                {musicHint}
-              </p>
-            ) : null}
-            </div>
-          </div>
 
-          <div className="space-y-2 group">
-            <div className="flex justify-between items-center">
-              <p className="text-xs font-medium text-primary/80 uppercase tracking-wider">
-                Lyrics & Chord Pro
-              </p>
-              <span className="text-on-surface-variant text-[10px] font-medium bg-white/5 px-2 py-1 rounded">
-                Markdown Supported
-              </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setShowYoutube((prev) => !prev)}
+                  className="w-full flex items-center gap-3 bg-white/5 p-4 rounded-xl border border-white/5 hover:border-primary/30 transition-all text-left"
+                >
+                  {youtubeVideoId(values.youtubeUrl) ? (
+                    <SongThumb
+                      youtubeUrl={values.youtubeUrl}
+                      title={values.title || "YouTube"}
+                      size="sm"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-400 shrink-0">
+                      <span className="material-symbols-outlined">
+                        play_circle
+                      </span>
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-on-surface">
+                      YouTube Link
+                    </div>
+                    <div className="text-sm text-on-surface-variant opacity-60 truncate">
+                      {youtubeVideoId(values.youtubeUrl)
+                        ? "Thumbnail ready"
+                        : "Attach reference video"}
+                    </div>
+                  </div>
+                </button>
+                {showYoutube ? (
+                  <div className="space-y-3">
+                    <input
+                      value={values.youtubeUrl}
+                      onChange={(event) =>
+                        patch("youtubeUrl", event.target.value)
+                      }
+                      className={fieldClass}
+                      placeholder="https://youtube.com/watch?v=..."
+                      type="url"
+                    />
+                    {youtubeVideoId(values.youtubeUrl) ? (
+                      <SongThumb
+                        youtubeUrl={values.youtubeUrl}
+                        title={values.title || "YouTube"}
+                        size="lg"
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  onClick={() => audioRef.current?.click()}
+                  className="w-full flex items-center gap-3 bg-white/5 p-4 rounded-xl border border-white/5 hover:border-primary/30 transition-all text-left"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center text-green-400 shrink-0">
+                    <span className="material-symbols-outlined">
+                      audio_file
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-on-surface">
+                      Audio Track
+                    </div>
+                    <div className="text-sm text-on-surface-variant opacity-60 truncate">
+                      {values.audioName || "Upload rehearsal mp3"}
+                    </div>
+                  </div>
+                </button>
+                <input
+                  ref={audioRef}
+                  className="hidden"
+                  type="file"
+                  accept="audio/*"
+                  onChange={(event) =>
+                    patch("audioName", event.target.files?.[0]?.name ?? "")
+                  }
+                />
+              </div>
             </div>
-            <div className="relative">
-              <textarea
-                ref={lyricsFieldRef}
-                id="song-lyrics"
-                value={values.lyrics}
-                onChange={(event) => patch("lyrics", event.target.value)}
-                className={`${fieldClass} min-h-[20rem] px-6 py-4 pr-14 font-mono text-sm leading-relaxed overflow-hidden resize-none`}
-                placeholder={`[Verse 1]\nYou are here, moving in our midst...\nI worship You, I worship You...`}
-                rows={16}
-              />
-              <button
-                type="button"
-                onClick={() => setLyricsEditorOpen(true)}
-                className="absolute top-3 right-3 w-9 h-9 rounded-lg bg-white/5 text-on-surface-variant hover:bg-white/10 hover:text-on-surface border border-white/10 flex items-center justify-center transition-all"
-                title="Open wide editor"
-                aria-label="Open wide editor"
-              >
-                <span className="material-symbols-outlined text-[18px]">
-                  open_in_full
+          </form>
+        </div>
+
+        <div className="px-8 py-6 border-t border-white/10 bg-white/5 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
+          <div className="flex items-center gap-2 text-on-surface-variant text-sm">
+            <span className="material-symbols-outlined filled text-primary">
+              info
+            </span>
+            <span>
+              Song will be synced to all connected production stations.
+            </span>
+          </div>
+          <div className="flex items-center gap-4 w-full md:w-auto">
+            <button
+              type="button"
+              onClick={closeForm}
+              disabled={saving}
+              className="flex-1 md:flex-none px-8 py-3 rounded-full text-xs font-medium text-on-surface border border-white/10 hover:bg-white/5 transition-all disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              form="song-form"
+              type="submit"
+              disabled={saving || !values.title.trim()}
+              className="flex-1 md:flex-none px-10 py-3 rounded-full text-xs font-semibold bg-gradient-to-r from-primary-container to-secondary-container text-white hover:opacity-90 hover:shadow-[0_0_20px_rgba(121,0,205,0.45)] transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 disabled:hover:shadow-none disabled:hover:opacity-60 disabled:active:scale-100"
+            >
+              {saving ? (
+                <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+              ) : (
+                <span className="material-symbols-outlined text-sm">
+                  check_circle
                 </span>
-              </button>
+              )}
+              {saving ? "Saving…" : isEdit ? "Save Changes" : "Save Song"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={open && lyricsEditorOpen}
+        onClose={() => setLyricsEditorOpen(false)}
+        labelledBy="lyrics-editor-title"
+        panelClassName="w-[min(960px,94vw)] h-[min(88vh,860px)] flex flex-col rounded-2xl"
+        backdropClassName="bg-black/75 backdrop-blur-md"
+        rootClassName="z-[110]"
+        bare
+      >
+        <div className="flex flex-col h-full min-h-0 bg-surface-container-lowest rounded-2xl border border-white/10 overflow-hidden">
+          <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
+            <div>
+              <p
+                id="lyrics-editor-title"
+                className="text-[12px] font-semibold tracking-[0.08em] uppercase text-on-surface-variant"
+              >
+                Lyrics & chords
+              </p>
+              <p className="text-sm text-on-surface-variant/80">
+                Type here, then Done or Esc.
+              </p>
             </div>
-            <div className="flex items-center justify-end gap-3">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                disabled={lyricsBusy || !values.title.trim() || !values.artist.trim()}
+                disabled={
+                  lyricsBusy || !values.title.trim() || !values.artist.trim()
+                }
                 onClick={() => void fillFromCatalog({ lyrics: true })}
-                className="w-9 h-9 shrink-0 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 border border-primary/20 flex items-center justify-center transition-all disabled:opacity-40 disabled:hover:bg-primary/15"
-                title="Fill lyrics from title and artist"
-                aria-label="Fill lyrics from title and artist"
+                className="px-3 py-2 rounded-lg text-xs font-medium text-primary hover:bg-primary/10 flex items-center gap-1 disabled:opacity-40"
               >
                 <span
-                  className={`material-symbols-outlined filled text-[20px] ${
+                  className={`material-symbols-outlined filled text-[16px] ${
                     lyricsBusy ? "animate-spin" : ""
                   }`}
                 >
                   {lyricsBusy ? "progress_activity" : "auto_awesome"}
                 </span>
+                Fill
               </button>
-            </div>
-            {lyricsHint ? (
-              <p
-                className={`text-xs ${
-                  lyricsHint.startsWith("Lyrics filled")
-                    ? "text-primary"
-                    : "text-on-surface-variant"
-                }`}
-              >
-                {lyricsHint}
-              </p>
-            ) : null}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-3">
               <button
                 type="button"
-                onClick={() => setShowYoutube((prev) => !prev)}
-                className="w-full flex items-center gap-3 bg-white/5 p-4 rounded-xl border border-white/5 hover:border-primary/30 transition-all text-left"
+                onClick={() => setLyricsEditorOpen(false)}
+                className="px-4 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold"
               >
-                {youtubeVideoId(values.youtubeUrl) ? (
-                  <SongThumb
-                    youtubeUrl={values.youtubeUrl}
-                    title={values.title || "YouTube"}
-                    size="sm"
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-400 shrink-0">
-                    <span className="material-symbols-outlined">play_circle</span>
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="text-xs font-medium text-on-surface">
-                    YouTube Link
-                  </div>
-                  <div className="text-sm text-on-surface-variant opacity-60 truncate">
-                    {youtubeVideoId(values.youtubeUrl)
-                      ? "Thumbnail ready"
-                      : "Attach reference video"}
-                  </div>
-                </div>
+                Done
               </button>
-              {showYoutube ? (
-                <div className="space-y-3">
-                  <input
-                    value={values.youtubeUrl}
-                    onChange={(event) => patch("youtubeUrl", event.target.value)}
-                    className={fieldClass}
-                    placeholder="https://youtube.com/watch?v=..."
-                    type="url"
-                  />
-                  {youtubeVideoId(values.youtubeUrl) ? (
-                    <SongThumb
-                      youtubeUrl={values.youtubeUrl}
-                      title={values.title || "YouTube"}
-                      size="lg"
-                    />
-                  ) : null}
-                </div>
-              ) : null}
             </div>
-
-            <div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 px-5 py-3 border-b border-white/10">
+            {LYRIC_SECTIONS.map((label) => (
               <button
+                key={label}
                 type="button"
-                onClick={() => audioRef.current?.click()}
-                className="w-full flex items-center gap-3 bg-white/5 p-4 rounded-xl border border-white/5 hover:border-primary/30 transition-all text-left"
+                onClick={() => insertLyricSection(label)}
+                className="h-7 px-2.5 rounded-full text-[11px] font-medium bg-white/5 text-on-surface-variant border border-white/10 hover:bg-primary/15 hover:text-primary hover:border-primary/30 transition-all"
               >
-                <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center text-green-400 shrink-0">
-                  <span className="material-symbols-outlined">audio_file</span>
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-medium text-on-surface">
-                    Audio Track
-                  </div>
-                  <div className="text-sm text-on-surface-variant opacity-60 truncate">
-                    {values.audioName || "Upload rehearsal mp3"}
-                  </div>
-                </div>
+                {label}
               </button>
-              <input
-                ref={audioRef}
-                className="hidden"
-                type="file"
-                accept="audio/*"
-                onChange={(event) =>
-                  patch("audioName", event.target.files?.[0]?.name ?? "")
-                }
-              />
-            </div>
+            ))}
           </div>
-        </form>
-      </div>
-
-      <div className="px-8 py-6 border-t border-white/10 bg-white/5 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
-        <div className="flex items-center gap-2 text-on-surface-variant text-sm">
-          <span className="material-symbols-outlined filled text-primary">
-            info
-          </span>
-          <span>Song will be synced to all connected production stations.</span>
+          <textarea
+            ref={lyricsEditorRef}
+            value={values.lyrics}
+            onChange={(event) => patch("lyrics", event.target.value)}
+            className="flex-1 min-h-0 w-full bg-transparent px-6 py-5 font-mono text-base sm:text-lg leading-relaxed text-on-surface resize-none focus:outline-none placeholder:text-on-surface-variant/30 custom-scrollbar"
+            placeholder={LYRICS_PLACEHOLDER}
+          />
         </div>
-        <div className="flex items-center gap-4 w-full md:w-auto">
-          <button
-            type="button"
-            onClick={closeForm}
-            className="flex-1 md:flex-none px-8 py-3 rounded-full text-xs font-medium text-on-surface border border-white/10 hover:bg-white/5 transition-all"
-          >
-            Cancel
-          </button>
-          <button
-            form="song-form"
-            type="submit"
-            className="flex-1 md:flex-none px-10 py-3 rounded-full text-xs font-medium bg-secondary-container text-on-secondary-container hover:shadow-[0_0_20px_rgba(121,0,205,0.4)] transition-all active:scale-95 flex items-center justify-center gap-2"
-          >
-            <span className="material-symbols-outlined text-sm">
-              check_circle
-            </span>
-            {isEdit ? "Save Changes" : "Save Song"}
-          </button>
-        </div>
-      </div>
-    </Modal>
-
-    <Modal
-      open={open && lyricsEditorOpen}
-      onClose={() => setLyricsEditorOpen(false)}
-      labelledBy="lyrics-editor-title"
-      panelClassName="w-[min(960px,94vw)] h-[min(88vh,860px)] flex flex-col rounded-2xl"
-      backdropClassName="bg-black/75 backdrop-blur-md"
-      rootClassName="z-[110]"
-      bare
-    >
-      <div className="flex flex-col h-full min-h-0 bg-surface-container-lowest rounded-2xl border border-white/10 overflow-hidden">
-        <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
-          <div>
-            <p
-              id="lyrics-editor-title"
-              className="text-[12px] font-semibold tracking-[0.08em] uppercase text-on-surface-variant"
-            >
-              Lyrics & chords
-            </p>
-            <p className="text-sm text-on-surface-variant/80">
-              Type here, then Done or Esc.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={lyricsBusy || !values.title.trim() || !values.artist.trim()}
-              onClick={() => void fillFromCatalog({ lyrics: true })}
-              className="px-3 py-2 rounded-lg text-xs font-medium text-primary hover:bg-primary/10 flex items-center gap-1 disabled:opacity-40"
-            >
-              <span
-                className={`material-symbols-outlined filled text-[16px] ${
-                  lyricsBusy ? "animate-spin" : ""
-                }`}
-              >
-                {lyricsBusy ? "progress_activity" : "auto_awesome"}
-              </span>
-              Fill
-            </button>
-            <button
-              type="button"
-              onClick={() => setLyricsEditorOpen(false)}
-              className="px-4 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-        <textarea
-          ref={lyricsEditorRef}
-          value={values.lyrics}
-          onChange={(event) => patch("lyrics", event.target.value)}
-          className="flex-1 min-h-0 w-full bg-transparent px-6 py-5 font-mono text-base sm:text-lg leading-relaxed text-on-surface resize-none focus:outline-none placeholder:text-on-surface-variant/30 custom-scrollbar"
-          placeholder={`[Verse 1]\nYou are here, moving in our midst...\nI worship You, I worship You...`}
-        />
-      </div>
-    </Modal>
+      </Modal>
     </>
   );
 }

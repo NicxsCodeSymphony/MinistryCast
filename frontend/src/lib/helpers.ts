@@ -94,16 +94,20 @@ export function textToLyricSections(text: string) {
   const trimmed = text.trim();
   if (!trimmed) return [];
   const chunks = trimmed.split(/\n(?=\[)/);
-  return chunks.map((chunk, index) => {
-    const lines = chunk.split("\n");
-    const hasHeading = lines[0].startsWith("[");
-    return {
-      section: hasHeading
-        ? lines[0].replace(/^\[|\]$/g, "")
-        : `Section ${index + 1}`,
-      content: (hasHeading ? lines.slice(1) : lines).join("\n").trim(),
-    };
-  }).filter((block) => block.content);
+  return chunks
+    .map((chunk, index) => {
+      const lines = chunk.split("\n");
+      const hasHeading = lines[0].startsWith("[");
+      return {
+        section: hasHeading
+          ? lines[0].replace(/^\[|\]$/g, "")
+          : `Section ${index + 1}`,
+        content: (hasHeading ? lines.slice(1) : lines).join("\n").trim(),
+        keepEmpty: hasHeading,
+      };
+    })
+    .filter((block) => block.content || block.keepEmpty)
+    .map(({ section, content }) => ({ section, content }));
 }
 
 export function splitLyricLines(content: string) {

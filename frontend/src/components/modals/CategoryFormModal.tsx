@@ -46,6 +46,7 @@ export default function CategoryFormModal({
   const titleId = useId();
   const descId = useId();
   const [values, setValues] = useState<CategoryFormValues>(emptyValues);
+  const [saving, setSaving] = useState(false);
   const originKey = useRef("");
   const persistSave = useRef(onSubmit);
   persistSave.current = onSubmit;
@@ -57,6 +58,7 @@ export default function CategoryFormModal({
     const next = { ...emptyValues, ...initialValues };
     setValues(next);
     originKey.current = JSON.stringify(next);
+    setSaving(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- reset only when opened
 
   const isEdit = mode === "edit";
@@ -67,11 +69,29 @@ export default function CategoryFormModal({
     description:
       "This category is not saved. Save it before you leave, or you’ll lose what you typed.",
     onSave: async () => {
-      if (!persistValues.current.name.trim()) return false;
-      await persistSave.current(persistValues.current);
+      if (!persistValues.current.name.trim() || saving) return false;
+      setSaving(true);
+      try {
+        await persistSave.current(persistValues.current);
+      } finally {
+        setSaving(false);
+      }
     },
   });
-  const requestClose = () => draft.guard(onClose);
+  const requestClose = () => {
+    if (saving) return;
+    draft.guard(onClose);
+  };
+
+  const submitCategory = async () => {
+    if (!values.name.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onSubmit(values);
+    } finally {
+      setSaving(false);
+    }
+  };
   const icons = useMemo(() => {
     if (CATEGORY_ICONS.some((icon) => icon.id === values.icon)) return CATEGORY_ICONS;
     return [...CATEGORY_ICONS, { id: values.icon, label: "Custom" }];
@@ -114,8 +134,7 @@ export default function CategoryFormModal({
         className="px-8 py-4 space-y-6"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!values.name.trim()) return;
-          onSubmit(values);
+          void submitCategory();
         }}
       >
         <div className="space-y-2">
@@ -265,19 +284,21 @@ export default function CategoryFormModal({
         <button
           type="button"
           onClick={requestClose}
-          className="flex-1 bg-surface-container-highest text-on-surface text-xs font-bold py-3 rounded-xl hover:bg-white/10 transition-all"
+          disabled={saving}
+          className="flex-1 bg-surface-container-highest text-on-surface text-xs font-bold py-3 rounded-xl hover:bg-white/10 transition-all disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           type="button"
-          onClick={() => {
-            if (!values.name.trim()) return;
-            onSubmit(values);
-          }}
-          className="flex-[2] bg-gradient-to-b from-primary-container to-on-primary-fixed-variant text-on-primary text-xs font-bold py-3 rounded-xl shadow-lg shadow-primary/20 hover:opacity-90 active:scale-[0.98] transition-all"
+          disabled={saving || !values.name.trim()}
+          onClick={() => void submitCategory()}
+          className="flex-[2] bg-gradient-to-b from-primary-container to-on-primary-fixed-variant text-on-primary text-xs font-bold py-3 rounded-xl shadow-lg shadow-primary/20 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 disabled:active:scale-100 flex items-center justify-center gap-2"
         >
-          {isEdit ? "Save Changes" : "Create Category"}
+          {saving ? (
+            <span className="w-4 h-4 rounded-full border-2 border-on-primary/30 border-t-on-primary animate-spin" />
+          ) : null}
+          {saving ? "Saving…" : isEdit ? "Save Changes" : "Create Category"}
         </button>
       </div>
     </Modal>

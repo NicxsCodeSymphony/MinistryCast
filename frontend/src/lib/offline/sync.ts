@@ -6,7 +6,7 @@ import {
   nowIso,
   setSyncSnapshot,
 } from "./status";
-import { getMeta, getOutbox, listRows, refreshPending, setMeta } from "./store";
+import { getMeta, listRows, refreshPending, setMeta } from "./store";
 
 let engineChurchId: string | null = null;
 let engineGen = 0;
@@ -37,10 +37,7 @@ function nextWait(lastSyncAt: string | null, frequency: string, minMs: number) {
 async function schedule(churchId: string, minMs = 5_000) {
   clearTimer();
   const meta = await getMeta(churchId);
-  const pending = (await getOutbox(churchId)).length;
-  const wait = pending
-    ? minMs
-    : nextWait(meta.lastSyncAt ?? meta.hydratedAt, meta.backupFrequency, minMs);
+  const wait = nextWait(meta.lastSyncAt ?? meta.hydratedAt, meta.backupFrequency, minMs);
   timer = window.setTimeout(() => {
     void runSync(churchId, "schedule");
   }, wait);
@@ -140,28 +137,10 @@ export async function forceSync() {
   await runSync(churchId, "manual");
 }
 
-let quietAt = 0;
-
-export async function refreshCloudQuiet() {
-  if (!isOnline()) return;
-  if (Date.now() - quietAt < 4000) return;
-  quietAt = Date.now();
-  const churchId = engineChurchId ?? (await requireChurchId());
-  try {
-    await pushOutbox(churchId);
-    await pullRemote(churchId);
-    await setMeta(churchId, { lastSyncAt: nowIso(), hydratedAt: nowIso() });
-    await refreshPending(churchId);
-  } catch {
-    /* keep the local copy if the cloud is briefly unreachable */
-  }
-}
-
 async function maybeSyncIfDue(churchId: string) {
   const meta = await getMeta(churchId);
-  const pending = (await getOutbox(churchId)).length;
   if (!isOnline()) return;
-  if (pending > 0 || isDue(meta.lastSyncAt, meta.backupFrequency)) {
+  if (isDue(meta.lastSyncAt, meta.backupFrequency)) {
     await runSync(churchId, "online");
   }
 }

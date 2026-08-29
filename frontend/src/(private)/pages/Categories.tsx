@@ -264,21 +264,20 @@ export default function Categories() {
         description={t("categories.deleteDesc", { name: deleting?.name ?? "" })}
         highlight={deleting ? `"${deleting.name}"` : undefined}
         onClose={() => setDeleteId(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (!deleteId) return;
-          void (async () => {
-            try {
-              await deleteCategory(deleteId);
-              setDeleteId(null);
-              await load();
-              toast.success("Category deleted.");
-            } catch (err) {
-              const message =
-                err instanceof Error ? err.message : t("categories.deleteError");
-              setError(message);
-              toast.error(message);
-            }
-          })();
+          try {
+            await deleteCategory(deleteId);
+            setDeleteId(null);
+            await load();
+            toast.success("Category deleted.");
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : t("categories.deleteError");
+            setError(message);
+            toast.error(message);
+            throw err;
+          }
         }}
       />
     </section>
