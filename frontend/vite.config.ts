@@ -1,15 +1,25 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+const pkg = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+) as { version: string };
+
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const isTauri =
+  Boolean(process.env.TAURI_ENV_PLATFORM) || Boolean(process.env.TAURI_CLI);
+const base = isTauri ? "/" : process.env.VITE_BASE || "/";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(),
-    tailwindcss()
-  ],
+  base,
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
+  plugins: [react(), tailwindcss()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

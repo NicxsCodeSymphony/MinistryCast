@@ -1,20 +1,26 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "frontend",
+  "productName": "MinistryCast",
   "version": "0.1.0",
-  "identifier": "com.nicxs.frontend",
+  "identifier": "com.ministrycast.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "frontend",
-        "width": 800,
-        "height": 600
+        "title": "MinistryCast",
+        "label": "main",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "resizable": true,
+        "maximized": true,
+        "fullscreen": false
       }
     ],
     "security": {
