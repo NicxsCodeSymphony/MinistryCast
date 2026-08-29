@@ -269,7 +269,7 @@ export default function AdminChurches() {
       <ConfirmDialog
         open={confirm === "delete"}
         onClose={() => setConfirm(null)}
-        onConfirm={() => void remove()}
+        onConfirm={() => remove()}
         title="Delete this church?"
         description={`This permanently removes ${selected?.name ?? "the church"} and all of its songs, sermons, and accounts.`}
         highlight={selected?.name}
@@ -278,7 +278,7 @@ export default function AdminChurches() {
       <ConfirmDialog
         open={confirm === "suspend"}
         onClose={() => setConfirm(null)}
-        onConfirm={() => void suspend()}
+        onConfirm={() => suspend()}
         title={selected?.status === "suspended" ? "Restore this church?" : "Suspend this church?"}
         description={
           selected?.status === "suspended"

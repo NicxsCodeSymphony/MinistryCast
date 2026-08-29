@@ -650,9 +650,7 @@ export default function Sermon() {
           description={`Are you sure you want to delete "${deletingSermon?.title ?? ""}"? This action cannot be undone.`}
           highlight={deletingSermon ? `"${deletingSermon.title}"` : undefined}
           onClose={() => setDeletingSermon(null)}
-          onConfirm={() => {
-            void confirmDeleteSermon();
-          }}
+          onConfirm={() => confirmDeleteSermon()}
         />
         {draft.dialog}
       </section>
@@ -1355,9 +1353,7 @@ export default function Sermon() {
         description={`Are you sure you want to delete "${deletingSermon?.title ?? ""}"? This action cannot be undone.`}
         highlight={deletingSermon ? `"${deletingSermon.title}"` : undefined}
         onClose={() => setDeletingSermon(null)}
-        onConfirm={() => {
-          void confirmDeleteSermon();
-        }}
+        onConfirm={() => confirmDeleteSermon()}
       />
       {draft.dialog}
     </section>

@@ -485,7 +485,7 @@ export default function Songs() {
                         {block.section}
                       </div>
                       <p className="leading-relaxed whitespace-pre-line text-on-surface-variant">
-                        {block.content}
+                        {block.content || "—"}
                       </p>
                     </div>
                   ))
@@ -540,21 +540,20 @@ export default function Songs() {
         description={`Are you sure you want to delete "${selected?.title ?? ""}"? This action cannot be undone.`}
         highlight={selected ? `"${selected.title}"` : undefined}
         onClose={() => setDeleteOpen(false)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (!selected) return;
-          void (async () => {
-            try {
-              await deleteSong(selected.id);
-              setDeleteOpen(false);
-              await load(0, false);
-              toast.success("Song deleted.");
-            } catch (err) {
-              const message =
-                err instanceof Error ? err.message : "Could not delete song.";
-              setError(message);
-              toast.error(message);
-            }
-          })();
+          try {
+            await deleteSong(selected.id);
+            setDeleteOpen(false);
+            await load(0, false);
+            toast.success("Song deleted.");
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Could not delete song.";
+            setError(message);
+            toast.error(message);
+            throw err;
+          }
         }}
       />
     </main>

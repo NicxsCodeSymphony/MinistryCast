@@ -53,7 +53,7 @@ import type {
 import { supabase } from "./supabase";
 import { publishPresentation, subscribeLocalPresentation } from "./offline/live";
 import { newId, nowIso } from "./offline/status";
-import { ensureHydrated, forceSync, refreshCloudQuiet, setBackupFrequency } from "./offline/sync";
+import { ensureHydrated, setBackupFrequency } from "./offline/sync";
 import {
   getRow,
   listRows,
@@ -66,7 +66,6 @@ import {
 async function ready() {
   const churchId = await requireChurchId();
   await ensureHydrated(churchId);
-  await refreshCloudQuiet();
   return churchId;
 }
 
@@ -673,11 +672,6 @@ export async function createSermon(input: SermonInput) {
     `sermon “${row.title}”`,
     "sermons",
   );
-  try {
-    await forceSync();
-  } catch {
-    /* local copy is kept until the next backup */
-  }
   return getSermon(row.id);
 }
 
@@ -719,11 +713,6 @@ export async function updateSermon(id: string, input: SermonInput) {
       `sermon “${row.title}”`,
       "sermons",
     );
-  }
-  try {
-    await forceSync();
-  } catch {
-    /* local copy is kept until the next backup */
   }
   return getSermon(id);
 }
@@ -1131,11 +1120,6 @@ export async function createSetlist(input: SetlistInput) {
   } else {
     await replaceSetlistShares(workspaceId, row.id, [workspaceId], workspaceId, row.name);
   }
-  try {
-    await forceSync();
-  } catch {
-    /* local copy is kept until the next backup */
-  }
   return getSetlist(row.id);
 }
 
@@ -1161,11 +1145,6 @@ export async function updateSetlist(id: string, input: SetlistInput) {
   await putRow(churchId, "setlists", row as LocalRow);
   if (isSuperadmin(profile) && requested.length) {
     await replaceSetlistShares(churchId, id, requested, homeId, row.name);
-  }
-  try {
-    await forceSync();
-  } catch {
-    /* local copy is kept until the next backup */
   }
   return getSetlist(id);
 }

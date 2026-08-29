@@ -46,6 +46,7 @@ export default function SetlistFormModal({
   const titleId = useId();
   const descId = useId();
   const [values, setValues] = useState<SetlistFormValues>(emptyValues);
+  const [saving, setSaving] = useState(false);
   const originKey = useRef("");
   const persistSave = useRef(onSubmit);
   persistSave.current = onSubmit;
@@ -57,6 +58,7 @@ export default function SetlistFormModal({
     const next = { ...emptyValues, ...initialValues };
     setValues(next);
     originKey.current = JSON.stringify(next);
+    setSaving(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- reset only when opened
 
   const isEdit = mode === "edit";
@@ -67,12 +69,31 @@ export default function SetlistFormModal({
     description:
       "This setlist is not saved. Save it before you leave, or you’ll lose what you typed.",
     onSave: async () => {
-      if (!persistValues.current.name.trim()) return false;
+      if (!persistValues.current.name.trim() || saving) return false;
       if (churches?.length && persistValues.current.churchIds.length === 0) return false;
-      await persistSave.current(persistValues.current);
+      setSaving(true);
+      try {
+        await persistSave.current(persistValues.current);
+      } finally {
+        setSaving(false);
+      }
     },
   });
-  const requestClose = () => draft.guard(onClose);
+  const requestClose = () => {
+    if (saving) return;
+    draft.guard(onClose);
+  };
+
+  const submitSetlist = async () => {
+    if (!values.name.trim() || saving) return;
+    if (churches?.length && values.churchIds.length === 0) return;
+    setSaving(true);
+    try {
+      await onSubmit(values);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <>
@@ -115,9 +136,7 @@ export default function SetlistFormModal({
           className="space-y-6"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!values.name.trim()) return;
-            if (churches?.length && values.churchIds.length === 0) return;
-            onSubmit(values);
+            void submitSetlist();
           }}
         >
           <div className="space-y-2 group">
@@ -270,23 +289,31 @@ export default function SetlistFormModal({
 
           <div className="pt-6 flex items-center gap-4">
             <button
-              className="flex-1 py-3 px-6 rounded-xl border border-white/10 text-on-surface-variant text-xs font-medium hover:bg-white/5 hover:text-on-surface transition-all"
+              className="flex-1 py-3 px-6 rounded-xl border border-white/10 text-on-surface-variant text-xs font-medium hover:bg-white/5 hover:text-on-surface transition-all disabled:opacity-50"
               onClick={requestClose}
               type="button"
+              disabled={saving}
             >
               Cancel
             </button>
             <button
               disabled={
-                !values.name.trim() || Boolean(churches?.length && values.churchIds.length === 0)
+                saving ||
+                !values.name.trim() ||
+                Boolean(churches?.length && values.churchIds.length === 0)
               }
-              className="flex-[1.5] py-3 px-6 rounded-xl glow-button text-white text-xs font-medium flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-40"
+              className="flex-[1.5] py-3 px-6 rounded-xl glow-button text-white text-xs font-medium flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
               type="submit"
             >
-              {isEdit ? "Save Setlist" : "Create Setlist"}
-              <span className="material-symbols-outlined text-sm">
-                arrow_forward
-              </span>
+              {saving ? (
+                <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+              ) : null}
+              {saving ? "Saving…" : isEdit ? "Save Setlist" : "Create Setlist"}
+              {saving ? null : (
+                <span className="material-symbols-outlined text-sm">
+                  arrow_forward
+                </span>
+              )}
             </button>
           </div>
         </form>

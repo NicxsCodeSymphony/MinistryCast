@@ -798,23 +798,22 @@ export default function Setlists() {
         description={`Are you sure you want to delete "${active?.name ?? ""}"? This action cannot be undone.`}
         highlight={active ? `"${active.name}"` : undefined}
         onClose={() => setDeleteOpen(false)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (!active) return;
-          void (async () => {
-            try {
-              await deleteSetlist(active.id);
-              setDeleteOpen(false);
-              setActive(null);
-              setSearchParams({}, { replace: true });
-              await loadList();
-              toast.success("Setlist deleted.");
-            } catch (err) {
-              const message =
-                err instanceof Error ? err.message : "Could not delete.";
-              setError(message);
-              toast.error(message);
-            }
-          })();
+          try {
+            await deleteSetlist(active.id);
+            setDeleteOpen(false);
+            setActive(null);
+            setSearchParams({}, { replace: true });
+            await loadList();
+            toast.success("Setlist deleted.");
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Could not delete.";
+            setError(message);
+            toast.error(message);
+            throw err;
+          }
         }}
       />
     </section>
