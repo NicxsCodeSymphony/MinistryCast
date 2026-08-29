@@ -1,10 +1,13 @@
 name: Desktop release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
