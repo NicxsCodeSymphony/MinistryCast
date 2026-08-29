@@ -1,11 +1,13 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Modal from "./Modal";
+import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
 
 export type SetlistFormValues = {
   name: string;
   date: string;
   duration: string;
   serviceType: string;
+  churchIds: string[];
 };
 
 const SERVICE_TYPES = [
@@ -21,14 +23,16 @@ const emptyValues: SetlistFormValues = {
   date: "",
   duration: "",
   serviceType: SERVICE_TYPES[0],
+  churchIds: [],
 };
 
 type SetlistFormModalProps = {
   open: boolean;
   onClose: () => void;
-  onSubmit: (values: SetlistFormValues) => void;
+  onSubmit: (values: SetlistFormValues) => void | Promise<void>;
   initialValues?: Partial<SetlistFormValues>;
   mode?: "create" | "edit";
+  churches?: { id: string; name: string }[];
 };
 
 export default function SetlistFormModal({
@@ -37,22 +41,45 @@ export default function SetlistFormModal({
   onSubmit,
   initialValues,
   mode = "create",
+  churches,
 }: SetlistFormModalProps) {
   const titleId = useId();
   const descId = useId();
   const [values, setValues] = useState<SetlistFormValues>(emptyValues);
+  const originKey = useRef("");
+  const persistSave = useRef(onSubmit);
+  persistSave.current = onSubmit;
+  const persistValues = useRef(values);
+  persistValues.current = values;
 
   useEffect(() => {
     if (!open) return;
-    setValues({ ...emptyValues, ...initialValues });
+    const next = { ...emptyValues, ...initialValues };
+    setValues(next);
+    originKey.current = JSON.stringify(next);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- reset only when opened
 
   const isEdit = mode === "edit";
+  const dirty = open && JSON.stringify(values) !== originKey.current;
+  const draft = useUnsavedDraft(dirty, {
+    enabled: open,
+    title: isEdit ? "Unsaved setlist" : "Unsaved setlist draft",
+    description:
+      "This setlist is not saved. Save it before you leave, or you’ll lose what you typed.",
+    onSave: async () => {
+      if (!persistValues.current.name.trim()) return false;
+      if (churches?.length && persistValues.current.churchIds.length === 0) return false;
+      await persistSave.current(persistValues.current);
+    },
+  });
+  const requestClose = () => draft.guard(onClose);
 
   return (
+    <>
+    {draft.dialog}
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       labelledBy={titleId}
       describedBy={descId}
       panelClassName="w-full max-w-lg rounded-2xl"
@@ -76,7 +103,7 @@ export default function SetlistFormModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="p-2 text-on-surface-variant hover:text-white transition-colors"
             aria-label="Close"
           >
@@ -89,6 +116,7 @@ export default function SetlistFormModal({
           onSubmit={(event) => {
             event.preventDefault();
             if (!values.name.trim()) return;
+            if (churches?.length && values.churchIds.length === 0) return;
             onSubmit(values);
           }}
         >
@@ -194,16 +222,65 @@ export default function SetlistFormModal({
             </div>
           </div>
 
+          {churches?.length ? (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-on-surface-variant ml-1">
+                Churches that can view and run this setlist
+              </p>
+              <p className="text-[11px] text-on-surface-variant ml-1">
+                Select one or more. Those churches can keep editing this setlist after you save it.
+              </p>
+              <div className="max-h-44 overflow-y-auto custom-scrollbar rounded-xl border border-white/10 bg-surface-container divide-y divide-white/5">
+                {churches.map((church) => {
+                  const checked = values.churchIds.includes(church.id);
+                  return (
+                    <label
+                      key={church.id}
+                      className="flex items-center gap-3 px-4 py-2.5 text-sm cursor-pointer hover:bg-white/5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setValues((prev) => ({
+                            ...prev,
+                            churchIds: checked
+                              ? prev.churchIds.filter((id) => id !== church.id)
+                              : [...prev.churchIds, church.id],
+                          }))
+                        }
+                        className="accent-primary"
+                      />
+                      <span className="truncate">{church.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              {values.churchIds.length === 0 ? (
+                <p className="text-[11px] text-[#ffb4ab] ml-1">
+                  Choose at least one church.
+                </p>
+              ) : (
+                <p className="text-[11px] text-on-surface-variant ml-1">
+                  {values.churchIds.length} selected
+                </p>
+              )}
+            </div>
+          ) : null}
+
           <div className="pt-6 flex items-center gap-4">
             <button
               className="flex-1 py-3 px-6 rounded-xl border border-white/10 text-on-surface-variant text-xs font-medium hover:bg-white/5 hover:text-on-surface transition-all"
-              onClick={onClose}
+              onClick={requestClose}
               type="button"
             >
               Cancel
             </button>
             <button
-              className="flex-[1.5] py-3 px-6 rounded-xl glow-button text-white text-xs font-medium flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+              disabled={
+                !values.name.trim() || Boolean(churches?.length && values.churchIds.length === 0)
+              }
+              className="flex-[1.5] py-3 px-6 rounded-xl glow-button text-white text-xs font-medium flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-40"
               type="submit"
             >
               {isEdit ? "Save Setlist" : "Create Setlist"}
@@ -215,5 +292,6 @@ export default function SetlistFormModal({
         </form>
       </div>
     </Modal>
+    </>
   );
 }

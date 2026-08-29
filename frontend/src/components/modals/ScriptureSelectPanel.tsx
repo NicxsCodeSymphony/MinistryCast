@@ -1,133 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  bibleVersionIdForCode,
+  findOrCreateScripturePassage,
+  loadBibleChapter,
+} from "../../lib/api";
+import {
+  BIBLE_BOOKS,
+  FREE_BIBLE_TRANSLATIONS,
+  formatBibleReference,
+  isFreeBibleTranslation,
+  joinVerseText,
+  parseBibleReference,
+  type BibleChapter,
+  type FreeBibleTranslation,
+} from "../../lib/bible";
 import { newServiceItem, type ServiceItem } from "./serviceItem";
-
-type Book = {
-  name: string;
-  testament: "ot" | "nt";
-  chapters: number;
-};
-
-const BOOKS: Book[] = [
-  { name: "Genesis", testament: "ot", chapters: 50 },
-  { name: "Exodus", testament: "ot", chapters: 40 },
-  { name: "Leviticus", testament: "ot", chapters: 27 },
-  { name: "Numbers", testament: "ot", chapters: 36 },
-  { name: "Deuteronomy", testament: "ot", chapters: 34 },
-  { name: "Joshua", testament: "ot", chapters: 24 },
-  { name: "Judges", testament: "ot", chapters: 21 },
-  { name: "Ruth", testament: "ot", chapters: 4 },
-  { name: "1 Samuel", testament: "ot", chapters: 31 },
-  { name: "2 Samuel", testament: "ot", chapters: 24 },
-  { name: "1 Kings", testament: "ot", chapters: 22 },
-  { name: "2 Kings", testament: "ot", chapters: 25 },
-  { name: "Psalms", testament: "ot", chapters: 150 },
-  { name: "Proverbs", testament: "ot", chapters: 31 },
-  { name: "Isaiah", testament: "ot", chapters: 66 },
-  { name: "Jeremiah", testament: "ot", chapters: 52 },
-  { name: "Matthew", testament: "nt", chapters: 28 },
-  { name: "Mark", testament: "nt", chapters: 16 },
-  { name: "Luke", testament: "nt", chapters: 24 },
-  { name: "John", testament: "nt", chapters: 21 },
-  { name: "Acts", testament: "nt", chapters: 28 },
-  { name: "Romans", testament: "nt", chapters: 16 },
-  { name: "1 Corinthians", testament: "nt", chapters: 16 },
-  { name: "2 Corinthians", testament: "nt", chapters: 13 },
-  { name: "Galatians", testament: "nt", chapters: 6 },
-  { name: "Ephesians", testament: "nt", chapters: 6 },
-  { name: "Philippians", testament: "nt", chapters: 4 },
-  { name: "Colossians", testament: "nt", chapters: 4 },
-  { name: "Hebrews", testament: "nt", chapters: 13 },
-  { name: "James", testament: "nt", chapters: 5 },
-  { name: "Revelation", testament: "nt", chapters: 22 },
-];
-
-const TRANSLATIONS = [
-  { value: "niv", label: "NIV (New International)" },
-  { value: "esv", label: "ESV (English Standard)" },
-  { value: "kjv", label: "KJV (King James)" },
-  { value: "nlt", label: "NLT (New Living)" },
-  { value: "nasb", label: "NASB (New American Standard)" },
-];
-
-const SAMPLE_VERSES: Record<string, Record<number, Record<number, string>>> = {
-  Luke: {
-    4: {
-      1: "And Jesus, full of the Holy Spirit, returned from the Jordan and was led by the Spirit in the wilderness",
-      2: "for forty days, being tempted by the devil. And he ate nothing during those days. And when they were ended, he was hungry.",
-      3: 'The devil said to him, "If you are the Son of God, command this stone to become bread."',
-      4: 'And Jesus answered him, "It is written, \'Man shall not live by bread alone.\'"',
-      5: "And the devil took him up and showed him all the kingdoms of the world in a moment of time.",
-    },
-  },
-  John: {
-    3: {
-      16: "For God so loved the world, that he gave his only Son, that whoever believes in him should not perish but have eternal life.",
-      17: "For God did not send his Son into the world to condemn the world, but in order that the world might be saved through him.",
-    },
-    4: {
-      23: "But the hour is coming, and is now here, when the true worshipers will worship the Father in spirit and truth.",
-      24: "God is spirit, and those who worship him must worship in spirit and truth.",
-    },
-  },
-  Psalms: {
-    23: {
-      1: "The Lord is my shepherd; I shall not want.",
-      2: "He makes me lie down in green pastures. He leads me beside still waters.",
-      3: "He restores my soul. He leads me in paths of righteousness for his name's sake.",
-      4: "Even though I walk through the valley of the shadow of death, I will fear no evil.",
-    },
-  },
-};
-
-function verseCount(book: string, chapter: number) {
-  const known = SAMPLE_VERSES[book]?.[chapter];
-  if (known) return Math.max(...Object.keys(known).map(Number), 8);
-  if (book === "Psalms") return 20;
-  return 12;
-}
-
-function verseText(book: string, chapter: number, verse: number) {
-  return (
-    SAMPLE_VERSES[book]?.[chapter]?.[verse] ??
-    `${book} ${chapter}:${verse} — selected for the reading.`
-  );
-}
-
-function parseReference(raw: string) {
-  const match = raw
-    .trim()
-    .match(
-      /^((?:[1-3]\s)?[A-Za-z]+(?:\s[A-Za-z]+)?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$/i,
-    );
-  if (!match) return null;
-  const bookName = match[1].replace(/\s+/g, " ");
-  const book = BOOKS.find(
-    (item) => item.name.toLowerCase() === bookName.toLowerCase(),
-  );
-  if (!book) return null;
-  const chapter = Number(match[2]);
-  if (chapter < 1 || chapter > book.chapters) return null;
-  const start = match[3] ? Number(match[3]) : 1;
-  const end = match[4] ? Number(match[4]) : match[3] ? Number(match[3]) : start;
-  const max = verseCount(book.name, chapter);
-  const verses: number[] = [];
-  for (let n = Math.min(start, end); n <= Math.min(Math.max(start, end), max); n += 1) {
-    verses.push(n);
-  }
-  return { book: book.name, chapter, verses };
-}
-
-function formatRange(verses: number[]) {
-  if (!verses.length) return "";
-  const sorted = [...verses].sort((a, b) => a - b);
-  if (sorted.length === 1) return String(sorted[0]);
-  const contiguous = sorted.every(
-    (n, i) => i === 0 || n === sorted[i - 1] + 1,
-  );
-  return contiguous
-    ? `${sorted[0]}-${sorted[sorted.length - 1]}`
-    : sorted.join(", ");
-}
 
 type ScriptureSelectPanelProps = {
   setlistName: string;
@@ -143,30 +30,61 @@ export default function ScriptureSelectPanel({
   onAdd,
 }: ScriptureSelectPanelProps) {
   const [quickRef, setQuickRef] = useState("Luke 4:2-4");
-  const [translation, setTranslation] = useState("esv");
+  const [translation, setTranslation] = useState<FreeBibleTranslation>("kjv");
   const [book, setBook] = useState("Luke");
   const [chapter, setChapter] = useState(4);
   const [selectedVerses, setSelectedVerses] = useState<number[]>([2, 3, 4]);
   const [previewMode, setPreviewMode] = useState<"screen" | "stage">("screen");
   const [autoPaginate, setAutoPaginate] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [chapterData, setChapterData] = useState<BibleChapter | null>(null);
+  const [chapterBusy, setChapterBusy] = useState(false);
+  const [chapterError, setChapterError] = useState("");
 
-  const bookMeta = BOOKS.find((item) => item.name === book) ?? BOOKS[0];
+  const bookMeta = BIBLE_BOOKS.find((item) => item.name === book) ?? BIBLE_BOOKS[0];
+  const verseMap = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const row of chapterData?.verses ?? []) map.set(row.verse, row.text);
+    return map;
+  }, [chapterData]);
   const verses = useMemo(
-    () =>
-      Array.from({ length: verseCount(book, chapter) }, (_, i) => i + 1),
-    [book, chapter],
+    () => (chapterData?.verses ?? []).map((row) => row.verse),
+    [chapterData],
   );
 
   useEffect(() => {
-    setSelectedVerses((prev) => prev.filter((n) => n <= verses.length));
-  }, [verses.length]);
+    const controller = new AbortController();
+    setChapterBusy(true);
+    setChapterError("");
+    void loadBibleChapter(book, chapter, translation, controller.signal)
+      .then((data) => {
+        setChapterData(data);
+        setSelectedVerses((prev) => {
+          const allowed = new Set(data.verses.map((row) => row.verse));
+          const next = prev.filter((n) => allowed.has(n));
+          return next.length ? next : data.verses[0] ? [data.verses[0].verse] : [];
+        });
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setChapterData(null);
+        setChapterError(
+          err instanceof Error ? err.message : "Could not load this chapter.",
+        );
+      })
+      .finally(() => setChapterBusy(false));
+    return () => controller.abort();
+  }, [book, chapter, translation]);
+
+  const verseText = (n: number) =>
+    verseMap.get(n) ?? (chapterBusy ? "Loading…" : "");
 
   const applyQuickRef = () => {
-    const parsed = parseReference(quickRef);
+    const parsed = parseBibleReference(quickRef);
     if (!parsed) return;
     setBook(parsed.book);
     setChapter(parsed.chapter);
-    setSelectedVerses(parsed.verses);
+    if (parsed.verses.length) setSelectedVerses(parsed.verses);
   };
 
   const toggleVerse = (n: number) => {
@@ -175,33 +93,44 @@ export default function ScriptureSelectPanel({
     );
   };
 
-  const reference = selectedVerses.length
-    ? `${book} ${chapter}:${formatRange(selectedVerses)}`
-    : `${book} ${chapter}`;
-
-  const translationLabel =
-    TRANSLATIONS.find((item) => item.value === translation)?.value.toUpperCase() ??
-    "ESV";
-
+  const reference = formatBibleReference(book, chapter, selectedVerses);
+  const translationLabel = translation.toUpperCase();
   const previewText = selectedVerses.length
     ? selectedVerses
         .slice(0, 3)
-        .map((n) => verseText(book, chapter, n))
+        .map((n) => verseText(n))
+        .filter(Boolean)
         .join(" ")
     : "Select verses to preview the lower third.";
 
   const addToSetlist = () => {
-    if (!selectedVerses.length) return;
-    onAdd(
-      newServiceItem({
-        title: `Scripture Reading: ${reference}`,
-        subtitle: `${translationLabel} • Layout: Lower Thirds`,
-        duration: "01:30",
-        label: "Verse",
-        icon: "menu_book",
-        accent: "secondary",
-      }),
-    );
+    if (!selectedVerses.length || saving) return;
+    setSaving(true);
+    void (async () => {
+      const text = joinVerseText(
+        selectedVerses.map((n) => ({ verse: n, text: verseText(n) })).filter((row) => row.text),
+      );
+      const bibleVersionId = await bibleVersionIdForCode(translation);
+      const passage = await findOrCreateScripturePassage({
+        reference,
+        text,
+        bibleVersionId,
+      });
+      onAdd(
+        newServiceItem({
+          itemType: "scripture",
+          passageId: passage.id,
+          title: `Scripture Reading: ${reference}`,
+          subtitle: `${translationLabel} • Layout: Lower Thirds`,
+          duration: "01:30",
+          label: "Verse",
+          icon: "menu_book",
+          accent: "secondary",
+        }),
+      );
+    })()
+      .catch(() => undefined)
+      .finally(() => setSaving(false));
   };
 
   return (
@@ -248,7 +177,7 @@ export default function ScriptureSelectPanel({
             <button
               type="button"
               onClick={addToSetlist}
-              disabled={!selectedVerses.length}
+              disabled={!selectedVerses.length || chapterBusy || Boolean(chapterError)}
               className="bg-gradient-to-b from-primary to-primary-container text-on-primary text-sm font-medium px-6 py-2 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-40 shadow-[0_0_15px_rgba(155,203,255,0.3)]"
             >
               Add to Setlist
@@ -291,10 +220,13 @@ export default function ScriptureSelectPanel({
                   <div className="relative soft-glow-focus rounded-lg">
                     <select
                       value={translation}
-                      onChange={(event) => setTranslation(event.target.value)}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        if (isFreeBibleTranslation(next)) setTranslation(next);
+                      }}
                       className="w-full appearance-none bg-surface-container-low border border-white/10 text-on-surface rounded-lg pl-4 pr-10 py-3 focus:outline-none focus:ring-0"
                     >
-                      {TRANSLATIONS.map((item) => (
+                      {FREE_BIBLE_TRANSLATIONS.map((item) => (
                         <option key={item.value} value={item.value}>
                           {item.label}
                         </option>
@@ -306,6 +238,14 @@ export default function ScriptureSelectPanel({
                   </div>
                 </div>
               </div>
+              {chapterError ? (
+                <p className="text-sm text-[#ffb4ab]">{chapterError}</p>
+              ) : (
+                <p className="text-xs text-on-surface-variant">
+                  Public-domain text from bible-api.com. Chapters are cached on this
+                  device and queued to backup online.
+                </p>
+              )}
             </div>
 
             <div className="glass-panel rounded-xl flex-1 flex flex-col overflow-hidden min-h-[360px]">
@@ -324,8 +264,8 @@ export default function ScriptureSelectPanel({
               <div className="flex-1 grid grid-cols-3 min-h-0">
                 <div className="overflow-y-auto border-r border-white/10 py-2 custom-scrollbar">
                   <ul className="space-y-1 px-2">
-                    {BOOKS.map((item, index) => {
-                      const prev = BOOKS[index - 1];
+                    {BIBLE_BOOKS.map((item, index) => {
+                      const prev = BIBLE_BOOKS[index - 1];
                       const showNt =
                         item.testament === "nt" && prev?.testament === "ot";
                       return (
@@ -362,9 +302,8 @@ export default function ScriptureSelectPanel({
                 </div>
                 <div className="overflow-y-auto border-r border-white/10 p-4 custom-scrollbar">
                   <div className="grid grid-cols-3 gap-2">
-                    {Array.from({ length: bookMeta.chapters }, (_, i) => i + 1)
-                      .slice(0, 48)
-                      .map((n) => (
+                    {Array.from({ length: bookMeta.chapters }, (_, i) => i + 1).map(
+                      (n) => (
                         <button
                           key={n}
                           type="button"
@@ -380,14 +319,20 @@ export default function ScriptureSelectPanel({
                         >
                           {n}
                         </button>
-                      ))}
+                      ),
+                    )}
                   </div>
                 </div>
                 <div className="overflow-y-auto p-2 custom-scrollbar">
+                  {chapterBusy && !verses.length ? (
+                    <p className="p-3 text-sm text-on-surface-variant">
+                      Loading verses…
+                    </p>
+                  ) : null}
                   <ul className="space-y-1">
                     {verses.map((n) => {
                       const checked = selectedVerses.includes(n);
-                      const text = verseText(book, chapter, n);
+                      const text = verseText(n);
                       return (
                         <li key={n}>
                           <label
@@ -494,7 +439,7 @@ export default function ScriptureSelectPanel({
                         <sup className="text-primary/70 font-normal text-sm mr-1">
                           {n}
                         </sup>
-                        {verseText(book, chapter, n)}{" "}
+                        {verseText(n)}{" "}
                       </span>
                     ))}
                     {!selectedVerses.length ? previewText : null}

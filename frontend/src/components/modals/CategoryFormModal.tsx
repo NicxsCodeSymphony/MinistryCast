@@ -1,5 +1,16 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Modal from "./Modal";
+import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
+import {
+  CATEGORY_COLOR_IDS,
+  CATEGORY_ICONS,
+  categoryTone,
+  categoryVisual,
+  presetForCategoryName,
+  presetForIcon,
+  type PickerCategoryColor,
+} from "../../lib/categoryColor";
+import type { CategoryColor } from "../../lib/types";
 
 export type CategoryFormValues = {
   name: string;
@@ -8,51 +19,19 @@ export type CategoryFormValues = {
   color: CategoryColor;
 };
 
-export type CategoryColor =
-  | "primary"
-  | "secondary"
-  | "tertiary"
-  | "error"
-  | "accent";
-
-const ICONS = [
-  "auto_awesome",
-  "music_note",
-  "groups",
-  "favorite",
-  "notifications_active",
-  "queue_music",
-  "bolt",
-  "brightness_high",
-] as const;
-
-const COLORS: { id: CategoryColor; className: string }[] = [
-  { id: "primary", className: "bg-primary" },
-  { id: "secondary", className: "bg-secondary" },
-  { id: "tertiary", className: "bg-tertiary" },
-  { id: "error", className: "bg-error" },
-  { id: "accent", className: "bg-primary-container" },
-];
-
-const colorPreview: Record<CategoryColor, string> = {
-  primary: "bg-primary text-on-primary",
-  secondary: "bg-secondary text-on-secondary",
-  tertiary: "bg-tertiary text-on-tertiary",
-  error: "bg-error text-on-error",
-  accent: "bg-primary-container text-on-primary-container",
-};
+export type { CategoryColor };
 
 const emptyValues: CategoryFormValues = {
   name: "",
   description: "",
-  icon: "auto_awesome",
-  color: "primary",
+  icon: "campaign",
+  color: "sky",
 };
 
 type CategoryFormModalProps = {
   open: boolean;
   onClose: () => void;
-  onSubmit: (values: CategoryFormValues) => void;
+  onSubmit: (values: CategoryFormValues) => void | Promise<void>;
   initialValues?: Partial<CategoryFormValues>;
   mode?: "create" | "edit";
 };
@@ -67,18 +46,44 @@ export default function CategoryFormModal({
   const titleId = useId();
   const descId = useId();
   const [values, setValues] = useState<CategoryFormValues>(emptyValues);
+  const originKey = useRef("");
+  const persistSave = useRef(onSubmit);
+  persistSave.current = onSubmit;
+  const persistValues = useRef(values);
+  persistValues.current = values;
 
   useEffect(() => {
     if (!open) return;
-    setValues({ ...emptyValues, ...initialValues });
+    const next = { ...emptyValues, ...initialValues };
+    setValues(next);
+    originKey.current = JSON.stringify(next);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- reset only when opened
 
   const isEdit = mode === "edit";
+  const dirty = open && JSON.stringify(values) !== originKey.current;
+  const draft = useUnsavedDraft(dirty, {
+    enabled: open,
+    title: isEdit ? "Unsaved category" : "Unsaved category draft",
+    description:
+      "This category is not saved. Save it before you leave, or you’ll lose what you typed.",
+    onSave: async () => {
+      if (!persistValues.current.name.trim()) return false;
+      await persistSave.current(persistValues.current);
+    },
+  });
+  const requestClose = () => draft.guard(onClose);
+  const icons = useMemo(() => {
+    if (CATEGORY_ICONS.some((icon) => icon.id === values.icon)) return CATEGORY_ICONS;
+    return [...CATEGORY_ICONS, { id: values.icon, label: "Custom" }];
+  }, [values.icon]);
+  const preview = categoryVisual[categoryTone(values.color)];
 
   return (
+    <>
+    {draft.dialog}
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       labelledBy={titleId}
       describedBy={descId}
       panelClassName="w-full max-w-lg rounded-3xl"
@@ -97,7 +102,7 @@ export default function CategoryFormModal({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={requestClose}
           className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition-colors text-on-surface-variant"
           aria-label="Close"
         >
@@ -123,9 +128,17 @@ export default function CategoryFormModal({
           <input
             id="category-name"
             value={values.name}
-            onChange={(event) =>
-              setValues((prev) => ({ ...prev, name: event.target.value }))
-            }
+            onChange={(event) => {
+              const name = event.target.value;
+              const preset = !isEdit ? presetForCategoryName(name) : null;
+              setValues((prev) => ({
+                ...prev,
+                name,
+                ...(preset
+                  ? { icon: preset.icon, color: preset.color }
+                  : {}),
+              }));
+            }}
             className="w-full bg-surface-container-low border border-white/10 rounded-xl px-4 py-3 text-base font-medium text-on-surface focus:outline-none focus:border-primary-container focus:ring-1 focus:ring-primary-container transition-all"
             type="text"
             placeholder="e.g. Worship"
@@ -155,73 +168,83 @@ export default function CategoryFormModal({
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-6">
-          <div className="space-y-3">
-            <p className="text-xs font-medium text-primary tracking-wide">
-              Representative Icon
-            </p>
-            <div className="grid grid-cols-4 gap-2">
-              {ICONS.map((icon) => {
-                const selected = values.icon === icon;
-                return (
-                  <button
-                    key={icon}
-                    type="button"
-                    onClick={() =>
-                      setValues((prev) => ({ ...prev, icon }))
-                    }
-                    className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-                      selected
-                        ? "bg-primary/20 text-primary border-2 border-primary"
-                        : "bg-surface-container-high text-on-surface-variant hover:bg-white/5"
+        <div className="space-y-3">
+          <p className="text-xs font-medium text-primary tracking-wide">
+            Representative Icon
+          </p>
+          <div className="grid grid-cols-5 gap-2">
+            {icons.map((icon) => {
+              const selected = values.icon === icon.id;
+              return (
+                <button
+                  key={icon.id}
+                  type="button"
+                  onClick={() => {
+                    const preset = !isEdit ? presetForIcon(icon.id) : null;
+                    setValues((prev) => ({
+                      ...prev,
+                      icon: icon.id,
+                      ...(preset ? { color: preset.color } : {}),
+                    }));
+                  }}
+                  className={`flex flex-col items-center justify-center gap-1 min-h-[4.5rem] px-1 py-2 rounded-xl transition-colors ${
+                    selected
+                      ? "bg-primary/20 text-primary border-2 border-primary"
+                      : "bg-surface-container-high text-on-surface-variant hover:bg-white/5 border-2 border-transparent"
+                  }`}
+                  aria-label={icon.label}
+                  aria-pressed={selected}
+                >
+                  <span
+                    className={`material-symbols-outlined text-[22px] ${
+                      selected ? "filled" : ""
                     }`}
-                    aria-label={icon.replace(/_/g, " ")}
-                    aria-pressed={selected}
                   >
-                    <span
-                      className={`material-symbols-outlined text-[20px] ${
-                        selected ? "filled" : ""
-                      }`}
-                    >
-                      {icon}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+                    {icon.id}
+                  </span>
+                  <span className="text-[9px] leading-tight text-center font-medium">
+                    {icon.label}
+                  </span>
+                </button>
+              );
+            })}
           </div>
+        </div>
 
-          <div className="space-y-3">
-            <p className="text-xs font-medium text-primary tracking-wide">
-              Brand Color
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {COLORS.map((color) => {
-                const selected = values.color === color.id;
-                return (
-                  <button
-                    key={color.id}
-                    type="button"
-                    onClick={() =>
-                      setValues((prev) => ({ ...prev, color: color.id }))
-                    }
-                    className={`w-6 h-6 rounded-full ${color.className} ${
-                      selected
-                        ? "border-2 border-white ring-2 ring-primary/20"
-                        : "hover:scale-110 transition-transform"
-                    }`}
-                    aria-label={color.id}
-                    aria-pressed={selected}
-                  />
-                );
-              })}
-            </div>
+        <div className="space-y-3">
+          <p className="text-xs font-medium text-primary tracking-wide">
+            Brand Color
+          </p>
+          <div className="flex flex-wrap gap-2.5">
+            {CATEGORY_COLOR_IDS.map((id) => {
+              const selected = categoryTone(values.color) === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() =>
+                    setValues((prev) => ({
+                      ...prev,
+                      color: id as PickerCategoryColor,
+                    }))
+                  }
+                  className={`w-7 h-7 rounded-full ${
+                    selected
+                      ? "ring-2 ring-white ring-offset-2 ring-offset-surface scale-110"
+                      : "hover:scale-110 transition-transform"
+                  }`}
+                  style={{ backgroundColor: categoryVisual[id].hex }}
+                  aria-label={id}
+                  aria-pressed={selected}
+                />
+              );
+            })}
           </div>
         </div>
 
         <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center gap-4">
           <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorPreview[values.color]}`}
+            className={`w-10 h-10 rounded-lg flex items-center justify-center ${preview.icon}`}
           >
             <span className="material-symbols-outlined text-[20px] filled">
               {values.icon}
@@ -241,7 +264,7 @@ export default function CategoryFormModal({
       <div className="px-8 pb-8 pt-4 flex gap-3">
         <button
           type="button"
-          onClick={onClose}
+          onClick={requestClose}
           className="flex-1 bg-surface-container-highest text-on-surface text-xs font-bold py-3 rounded-xl hover:bg-white/10 transition-all"
         >
           Cancel
@@ -258,5 +281,6 @@ export default function CategoryFormModal({
         </button>
       </div>
     </Modal>
+    </>
   );
 }

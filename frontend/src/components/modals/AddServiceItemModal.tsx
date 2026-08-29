@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import Modal from "./Modal";
 import MediaSelectPanel from "./MediaSelectPanel";
+import RosterFormPanel from "./RosterFormPanel";
 import ScriptureSelectPanel from "./ScriptureSelectPanel";
 import SermonSelectPanel from "./SermonSelectPanel";
 import SongSelectPanel from "./SongSelectPanel";
@@ -43,12 +44,20 @@ const OPTIONS: {
     icon: "movie",
     iconClass: "bg-error/10 text-error group-hover:bg-error/20",
   },
+  {
+    kind: "roster",
+    title: "Assignments",
+    description: "Next week’s readers, prayers, and worship leader.",
+    icon: "assignment_ind",
+    iconClass: "bg-secondary/10 text-secondary group-hover:bg-secondary/20",
+  },
 ];
 
 type AddServiceItemModalProps = {
   open: boolean;
   onClose: () => void;
   setlistName: string;
+  serviceAt?: string | null;
   onAdd: (item: ServiceItem) => void;
 };
 
@@ -56,6 +65,7 @@ export default function AddServiceItemModal({
   open,
   onClose,
   setlistName,
+  serviceAt,
   onAdd,
 }: AddServiceItemModalProps) {
   const titleId = useId();
@@ -65,26 +75,26 @@ export default function AddServiceItemModal({
     if (open) setStep("picker");
   }, [open]);
 
-  const isPicker = step === "picker";
+  const compact = step === "picker" || step === "roster";
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      labelledBy={isPicker ? titleId : undefined}
-      bare={!isPicker}
+      labelledBy={step === "picker" ? titleId : undefined}
+      bare={!compact}
       panelClassName={
-        isPicker
+        compact
           ? "w-full max-w-2xl rounded-xl flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
           : "w-full max-w-none h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] rounded-2xl flex flex-col bg-surface-container/70 backdrop-blur-2xl border border-white/10"
       }
       backdropClassName={
-        isPicker
+        compact
           ? "bg-black/60 backdrop-blur-sm"
           : "bg-black/60 backdrop-blur-xl"
       }
     >
-      {isPicker ? (
+      {step === "picker" ? (
         <>
           <div className="flex items-center justify-between p-6 border-b border-white/5">
             <h2
@@ -172,6 +182,16 @@ export default function AddServiceItemModal({
       {step === "media" ? (
         <MediaSelectPanel
           setlistName={setlistName}
+          onBack={() => setStep("picker")}
+          onClose={onClose}
+          onAdd={onAdd}
+        />
+      ) : null}
+
+      {step === "roster" ? (
+        <RosterFormPanel
+          setlistName={setlistName}
+          serviceAt={serviceAt}
           onBack={() => setStep("picker")}
           onClose={onClose}
           onAdd={onAdd}

@@ -9,7 +9,9 @@ type ModalProps = {
   describedBy?: string;
   panelClassName?: string;
   backdropClassName?: string;
+  rootClassName?: string;
   bare?: boolean;
+  captureEscape?: boolean;
 };
 
 export default function Modal({
@@ -20,24 +22,30 @@ export default function Modal({
   describedBy,
   panelClassName = "w-full max-w-lg rounded-2xl",
   backdropClassName = "bg-black/60 backdrop-blur-md",
+  rootClassName = "z-[100]",
   bare = false,
+  captureEscape = false,
 }: ModalProps) {
   useEffect(() => {
     if (!open) return;
 
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      onClose();
     };
 
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    document.addEventListener("keydown", onKey, captureEscape);
+    return () => document.removeEventListener("keydown", onKey, captureEscape);
+  }, [captureEscape, open, onClose]);
 
   if (!open) return null;
 
   return createPortal(
     <div
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-4 ${backdropClassName}`}
+      className={`fixed inset-0 ${rootClassName} flex items-center justify-center p-4 backdrop-in ${backdropClassName}`}
       onClick={onClose}
       role="presentation"
     >

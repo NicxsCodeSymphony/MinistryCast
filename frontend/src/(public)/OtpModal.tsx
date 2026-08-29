@@ -1,49 +1,77 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import Modal from "../components/modals/Modal";
+import { useToast } from "../lib/ToastContext";
 
 const LENGTH = 6;
 
 type OtpModalProps = {
   open: boolean;
   email: string;
+  busy?: boolean;
   onClose: () => void;
-  onVerified: () => void;
+  onVerify: (code: string) => Promise<void>;
+  onResend: () => Promise<void>;
 };
 
 export default function OtpModal({
   open,
   email,
+  busy = false,
   onClose,
-  onVerified,
+  onVerify,
+  onResend,
 }: OtpModalProps) {
+  const toast = useToast();
   const titleId = useId();
   const descId = useId();
   const [digits, setDigits] = useState<string[]>(() => Array(LENGTH).fill(""));
   const [error, setError] = useState("");
   const [resent, setResent] = useState(false);
+  const [working, setWorking] = useState(false);
   const inputs = useRef<Array<HTMLInputElement | null>>([]);
+  const submitted = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     setDigits(Array(LENGTH).fill(""));
     setError("");
     setResent(false);
+    setWorking(false);
+    submitted.current = false;
     const id = window.setTimeout(() => inputs.current[0]?.focus(), 50);
     return () => window.clearTimeout(id);
   }, [open]);
 
-  const applyValue = (next: string[]) => {
+  const submit = async (code: string) => {
+    if (submitted.current || working) return;
+    submitted.current = true;
+    setWorking(true);
+    setError("");
+    try {
+      await onVerify(code);
+    } catch (err) {
+      submitted.current = false;
+      const message =
+        err instanceof Error ? err.message : "Could not verify that code.";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const maybeSubmit = (next: string[]) => {
     setDigits(next);
     setError("");
     if (next.every((d) => d !== "")) {
-      onVerified();
+      void submit(next.join(""));
     }
   };
 
   const handleChange = (index: number, raw: string) => {
     const cleaned = raw.replace(/\D/g, "");
     if (!cleaned) {
-      applyValue(digits.map((d, i) => (i === index ? "" : d)));
+      maybeSubmit(digits.map((d, i) => (i === index ? "" : d)));
       return;
     }
     if (cleaned.length > 1) {
@@ -54,13 +82,13 @@ export default function OtpModal({
         .forEach((char, offset) => {
           next[index + offset] = char;
         });
-      applyValue(next);
+      maybeSubmit(next);
       const focusAt = Math.min(index + cleaned.length, LENGTH - 1);
       inputs.current[focusAt]?.focus();
       return;
     }
     const next = digits.map((d, i) => (i === index ? cleaned : d));
-    applyValue(next);
+    maybeSubmit(next);
     if (index < LENGTH - 1) inputs.current[index + 1]?.focus();
   };
 
@@ -84,8 +112,12 @@ export default function OtpModal({
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (digits.every((d) => d !== "")) onVerified();
-      else setError("Enter all 6 digits to continue.");
+      const code = digits.join("");
+      if (code.length === LENGTH) void submit(code);
+      else {
+        setError("Enter all 6 digits to continue.");
+        toast.warning("Enter all 6 digits to continue.");
+      }
     }
   };
 
@@ -96,9 +128,11 @@ export default function OtpModal({
     const next = Array(LENGTH)
       .fill("")
       .map((_, i) => pasted[i] ?? "");
-    applyValue(next);
+    maybeSubmit(next);
     inputs.current[Math.min(pasted.length, LENGTH) - 1]?.focus();
   };
+
+  const locked = working || busy;
 
   return (
     <Modal
@@ -122,6 +156,7 @@ export default function OtpModal({
         <p id={descId} className="mt-2 text-sm text-white/50 leading-relaxed">
           We sent a code to{" "}
           <span className="text-[#E2E8F0] font-medium">{email}</span>
+          . Enter it here — you do not need to click a link.
         </p>
 
         <div className="mt-8 flex justify-between gap-2">
@@ -132,6 +167,7 @@ export default function OtpModal({
                 inputs.current[index] = node;
               }}
               value={digit}
+              disabled={locked}
               onChange={(event) => handleChange(index, event.target.value)}
               onKeyDown={(event) => handleKeyDown(index, event)}
               onPaste={handlePaste}
@@ -140,7 +176,7 @@ export default function OtpModal({
               autoComplete={index === 0 ? "one-time-code" : "off"}
               maxLength={1}
               aria-label={`Digit ${index + 1}`}
-              className="w-11 h-14 sm:w-12 sm:h-16 rounded-[8px] border border-white/10 bg-white/10 text-center text-xl font-semibold text-[#E2E8F0] outline-none focus:border-[#4F46E5] focus:ring-1 focus:ring-[#4F46E5]/40"
+              className="w-11 h-14 sm:w-12 sm:h-16 rounded-[8px] border border-white/10 bg-white/10 text-center text-xl font-semibold text-[#E2E8F0] outline-none focus:border-[#4F46E5] focus:ring-1 focus:ring-[#4F46E5]/40 disabled:opacity-60"
             />
           ))}
         </div>
@@ -151,16 +187,19 @@ export default function OtpModal({
 
         <button
           type="button"
+          disabled={locked}
           onClick={() => {
-            if (digits.some((d) => !d)) {
+            const code = digits.join("");
+            if (code.length !== LENGTH) {
               setError("Enter all 6 digits to continue.");
+              toast.warning("Enter all 6 digits to continue.");
               return;
             }
-            onVerified();
+            void submit(code);
           }}
-          className="mt-8 w-full min-h-[56px] bg-[#4F46E5] rounded-[8px] text-white font-semibold text-[16px] hover:brightness-110 active:scale-[0.99] transition-all"
+          className="mt-8 w-full min-h-[56px] bg-[#4F46E5] rounded-[8px] text-white font-semibold text-[16px] hover:brightness-110 active:scale-[0.99] transition-all disabled:opacity-60"
         >
-          Verify code
+          {working ? "Verifying…" : "Verify code"}
         </button>
 
         <div className="mt-4 flex items-center justify-between gap-3 text-sm">
@@ -173,13 +212,28 @@ export default function OtpModal({
           </button>
           <button
             type="button"
+            disabled={locked}
             onClick={() => {
-              setDigits(Array(LENGTH).fill(""));
-              setError("");
-              setResent(true);
-              inputs.current[0]?.focus();
+              void (async () => {
+                setError("");
+                try {
+                  await onResend();
+                  setDigits(Array(LENGTH).fill(""));
+                  setResent(true);
+                  submitted.current = false;
+                  inputs.current[0]?.focus();
+                  toast.success("A new code was sent.");
+                } catch (err) {
+                  const message =
+                    err instanceof Error
+                      ? err.message
+                      : "Could not resend the code.";
+                  setError(message);
+                  toast.error(message);
+                }
+              })();
             }}
-            className="text-[#4FACFE] hover:underline"
+            className="text-[#4FACFE] hover:underline disabled:opacity-60"
           >
             {resent ? "Code resent" : "Resend code"}
           </button>

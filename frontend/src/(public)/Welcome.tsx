@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   GoogleIcon,
@@ -6,29 +6,67 @@ import {
   MinistryCastIcon,
   UpArrowIcon,
 } from "../components/icons";
+import {
+  getSessionProfile,
+  nextPathForProfile,
+  sendEmailOtp,
+  verifyEmailOtp,
+} from "../lib/auth";
 import AuthFrame, { AUTH_EMAIL_KEY, isValidEmail } from "./AuthFrame";
 import OtpModal from "./OtpModal";
+import { useToast } from "../lib/ToastContext";
 
 const WelcomePage = () => {
   const navigate = useNavigate();
+  const toast = useToast();
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [otpOpen, setOtpOpen] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  const openOtp = () => {
+  useEffect(() => {
+    void (async () => {
+      try {
+        const profile = await getSessionProfile();
+        const next = nextPathForProfile(profile);
+        if (next !== "/") navigate(next, { replace: true });
+      } catch {
+        // stay on welcome if supabase is down
+      }
+    })();
+  }, [navigate]);
+
+  const requestCode = async (address: string) => {
+    await sendEmailOtp(address);
+    sessionStorage.setItem(AUTH_EMAIL_KEY, address);
+  };
+
+  const openOtp = async () => {
     const trimmed = email.trim();
     if (!isValidEmail(trimmed)) {
       setError("Enter a valid email address to continue.");
+      toast.warning("Enter a valid email address to continue.");
       return;
     }
     setError("");
-    sessionStorage.setItem(AUTH_EMAIL_KEY, trimmed);
-    setOtpOpen(true);
+    setSending(true);
+    try {
+      await requestCode(trimmed);
+      setOtpOpen(true);
+      toast.success("Code sent. Check your inbox.");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not send the code.";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    openOtp();
+    void openOtp();
   };
 
   return (
@@ -81,10 +119,13 @@ const WelcomePage = () => {
         <div className="mt-4 flex flex-row items-center gap-3">
           <button
             type="submit"
-            className="flex-1 min-h-[56px] sm:min-h-[65px] bg-[#4F46E5] rounded-[8px] flex items-center justify-center gap-2 focus:outline-none hover:brightness-110 active:scale-[0.99] transition-all"
+            disabled={sending}
+            className="flex-1 min-h-[56px] sm:min-h-[65px] bg-[#4F46E5] rounded-[8px] flex items-center justify-center gap-2 focus:outline-none hover:brightness-110 active:scale-[0.99] transition-all disabled:opacity-60"
           >
             <UpArrowIcon />
-            <h5 className="text-white font-semibold text-[16px]">Continue</h5>
+            <h5 className="text-white font-semibold text-[16px]">
+              {sending ? "Sending code…" : "Continue"}
+            </h5>
           </button>
           <button
             type="button"
@@ -99,10 +140,17 @@ const WelcomePage = () => {
       <OtpModal
         open={otpOpen}
         email={email.trim()}
+        busy={sending}
         onClose={() => setOtpOpen(false)}
-        onVerified={() => {
+        onVerify={async (code) => {
+          const trimmed = email.trim();
+          await verifyEmailOtp(trimmed, code);
+          const profile = await getSessionProfile();
           setOtpOpen(false);
-          navigate("/signup", { state: { email: email.trim() } });
+          navigate(nextPathForProfile(profile), { state: { email: trimmed } });
+        }}
+        onResend={async () => {
+          await requestCode(email.trim());
         }}
       />
     </AuthFrame>

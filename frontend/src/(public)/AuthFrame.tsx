@@ -5,7 +5,7 @@ import {
   CollaborationIcon,
   VideoIcon,
 } from "../components/icons";
-import welcomeImage from "../assets/images/welcome-image.png";
+import churchInterior from "../assets/images/church-interior.png";
 
 type AuthFrameProps = {
   children: ReactNode;
@@ -72,11 +72,11 @@ export default function AuthFrame({ children }: AuthFrameProps) {
               </div>
             </div>
 
-            <div className="mt-8 xl:mt-16">
+            <div className="mt-8 xl:mt-10">
               <img
-                src={welcomeImage}
-                alt="Welcome"
-                className="w-full h-28 sm:h-32 object-cover rounded-[12px]"
+                src={churchInterior}
+                alt="Sanctuary"
+                className="w-full h-40 sm:h-56 lg:h-64 object-cover rounded-[12px] border border-white/10"
               />
             </div>
           </div>

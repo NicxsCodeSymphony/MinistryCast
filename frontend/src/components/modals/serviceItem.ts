@@ -1,5 +1,15 @@
+import type { RosterPayload } from "../../lib/roster";
+
+export type ServiceItemKind = "song" | "sermon" | "scripture" | "media" | "roster";
+
 export type ServiceItem = {
   id: string;
+  itemType: ServiceItemKind;
+  songId?: string | null;
+  sermonId?: string | null;
+  passageId?: string | null;
+  mediaAssetId?: string | null;
+  payload?: RosterPayload | null;
   title: string;
   subtitle: string;
   duration: string;
@@ -10,8 +20,6 @@ export type ServiceItem = {
   keyBadge?: string;
   durationTone?: "primary" | "tertiary";
 };
-
-export type ServiceItemKind = "song" | "sermon" | "scripture" | "media";
 
 export function newServiceItem(
   item: Omit<ServiceItem, "id">,
