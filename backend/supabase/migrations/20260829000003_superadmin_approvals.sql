@@ -1,5 +1,5 @@
 -- Superadmin role, church reject status, approval RPCs.
--- Seeded account: edisannico+superadmin@gmail.com (see supabase/seed.sql)
+-- Seeded account: edisannico@gmail.com (see supabase/seed.sql)
 
 ALTER TABLE public.users DROP CONSTRAINT chk_users_role;
 ALTER TABLE public.users ADD CONSTRAINT chk_users_role
@@ -113,7 +113,7 @@ BEGIN
     RAISE EXCEPTION 'auth user has no email';
   END IF;
 
-  IF lower(auth_email) = 'edisannico+superadmin@gmail.com' THEN
+  IF lower(auth_email) = 'edisannico@gmail.com' THEN
     RAISE EXCEPTION 'this account is reserved';
   END IF;
 

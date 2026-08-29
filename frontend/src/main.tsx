@@ -1,9 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
+import AnimatedOutlet from "./components/AnimatedOutlet";
 import App from "./App";
 import WelcomePage from "./(public)/Welcome";
 import SignUp from "./(public)/SignUp";
+import Register from "./(public)/Register";
+import ForgotPassword from "./(public)/ForgotPassword";
+import ResetPassword from "./(public)/ResetPassword";
 import Onboarding from "./(public)/Onboarding";
 import Dashboard from "./(private)/pages/Dashboard";
 import PrivateLayout from "./(private)/layout/PrivateLayout";
@@ -41,9 +45,17 @@ const router = createBrowserRouter([
   {
     element: <Root />,
     children: [
-      { path: "/", element: <App /> },
-      { path: "/welcome", element: <WelcomePage /> },
-      { path: "/signup", element: <SignUp /> },
+      {
+        element: <AnimatedOutlet />,
+        children: [
+          { path: "/", element: <App /> },
+          { path: "/welcome", element: <WelcomePage /> },
+          { path: "/register", element: <Register /> },
+          { path: "/forgot-password", element: <ForgotPassword /> },
+          { path: "/reset-password", element: <ResetPassword /> },
+          { path: "/signup", element: <SignUp /> },
+        ],
+      },
       {
         element: <RequireActive />,
         children: [
