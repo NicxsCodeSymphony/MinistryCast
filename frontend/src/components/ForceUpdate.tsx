@@ -1,28 +1,45 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BUNDLED_VERSION, readAppVersion } from "../lib/appVersion";
 
 function isTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-type Phase = "hidden" | "checking" | "downloading" | "restarting" | "error";
+function errorMessage(err: unknown) {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string") return err;
+  return "Could not reach the update server.";
+}
+
+type Phase = "hidden" | "downloading" | "restarting" | "error";
 
 export default function ForceUpdate() {
   const [phase, setPhase] = useState<Phase>("hidden");
+  const [currentVersion, setCurrentVersion] = useState(BUNDLED_VERSION);
   const [nextVersion, setNextVersion] = useState("");
   const [percent, setPercent] = useState(0);
+  const [detail, setDetail] = useState("");
+  const installing = useRef(false);
+
+  useEffect(() => {
+    void readAppVersion().then(setCurrentVersion);
+  }, []);
 
   const run = useCallback(async () => {
     if (!isTauri() || import.meta.env.DEV) return;
-    setPhase("checking");
+    installing.current = false;
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
       const update = await check();
       if (!update) {
         setPhase("hidden");
+        setDetail("");
         return;
       }
+      installing.current = true;
       setNextVersion(update.version);
       setPhase("downloading");
+      setPercent(0);
       let downloaded = 0;
       let total = 0;
       await update.downloadAndInstall((event) => {
@@ -39,7 +56,13 @@ export default function ForceUpdate() {
       setPhase("restarting");
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
-    } catch {
+    } catch (err) {
+      const message = errorMessage(err);
+      if (!installing.current) {
+        setPhase("hidden");
+        return;
+      }
+      setDetail(message);
       setPhase("error");
     }
   }, []);
@@ -56,21 +79,28 @@ export default function ForceUpdate() {
     return () => window.clearTimeout(id);
   }, [phase, run]);
 
-  if (phase === "hidden" || phase === "checking") return null;
+  if (phase === "hidden") return null;
 
   const label =
     phase === "restarting"
       ? "Restarting…"
       : phase === "error"
-        ? "Update failed. Retrying from Settings is not needed — retrying automatically."
+        ? detail || "Update failed."
         : `Downloading ${nextVersion}…`;
 
   return (
     <div className="fixed inset-0 z-[200] bg-[#0B0B14]/92 backdrop-blur-md flex items-center justify-center p-6">
       <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface-container p-8 text-center">
         <p className="text-[10px] tracking-[0.2em] font-bold text-[#4FACFE]">MINISTRYCAST</p>
-        <h2 className="mt-4 text-2xl font-semibold text-on-surface">Required update</h2>
-        <p className="mt-3 text-sm text-on-surface-variant">{label}</p>
+        <h2 className="mt-4 text-2xl font-semibold text-on-surface">
+          {phase === "error" ? "Update failed" : "Required update"}
+        </h2>
+        <p className="mt-3 text-sm font-medium text-on-surface">
+          {nextVersion
+            ? `${currentVersion} → ${nextVersion}`
+            : `Installed ${currentVersion}`}
+        </p>
+        <p className="mt-2 text-sm text-on-surface-variant break-words">{label}</p>
         {phase === "downloading" ? (
           <div className="mt-6 h-2 rounded-full bg-white/10 overflow-hidden">
             <div
