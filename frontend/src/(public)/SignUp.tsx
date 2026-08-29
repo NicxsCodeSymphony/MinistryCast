@@ -88,7 +88,7 @@ export default function SignUp() {
   const submitted = Boolean(profile?.user);
 
   return (
-    <AuthFrame>
+    <AuthFrame step={2}>
       <MinistryCastIcon />
 
       {submitted ? (

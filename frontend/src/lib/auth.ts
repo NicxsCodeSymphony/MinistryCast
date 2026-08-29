@@ -35,29 +35,49 @@ function asError(error: { message: string } | null, fallback: string) {
   return new Error(error?.message || fallback);
 }
 
-export async function sendEmailOtp(email: string) {
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      shouldCreateUser: true,
-    },
-  });
-  if (error) throw asError(error, "Could not send the code.");
+async function invokeFunction(name: string, body: Record<string, unknown>) {
+  const { data, error } = await supabase.functions.invoke<{
+    ok?: boolean;
+    error?: string;
+  }>(name, { body });
+
+  if (error) {
+    let detail = error.message;
+    const response = (error as { context?: Response }).context;
+    if (response) {
+      try {
+        const payload = (await response.clone().json()) as { error?: string };
+        if (payload.error) detail = payload.error;
+      } catch {
+        // keep error.message
+      }
+    }
+    throw new Error(detail || "Request failed.");
+  }
+
+  if (data?.error) throw new Error(data.error);
 }
 
-export async function verifyEmailOtp(email: string, token: string) {
-  const types = ["email", "signup", "magiclink"] as const;
-  let lastError: { message: string } | null = null;
-  for (const type of types) {
-    const { data, error } = await supabase.auth.verifyOtp({
-      email,
-      token,
-      type,
-    });
-    if (!error) return data;
-    lastError = error;
-  }
-  throw asError(lastError, "That code is invalid or expired.");
+export async function registerAccount(email: string, password: string) {
+  await invokeFunction("register-account", { email, password });
+  await signInWithEmailPassword(email, password);
+}
+
+export async function requestPasswordReset(email: string) {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/reset-password`,
+  });
+  if (error) throw asError(error, "Could not send the reset email.");
+}
+
+export async function updatePassword(password: string) {
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw asError(error, "Could not update your password.");
+}
+
+export async function signInWithEmailPassword(email: string, password: string) {
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw asError(error, "Could not sign in.");
 }
 
 const PROFILE_CACHE_KEY = "mc_session_profile";

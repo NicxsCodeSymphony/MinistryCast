@@ -9,7 +9,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview --host",
     "web": "vite --host",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:headed": "playwright test --headed",
+    "e2e:record": "playwright codegen http://localhost:1420"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -25,6 +29,7 @@
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

@@ -1,4 +1,4 @@
--- Platform church + superadmin. Login with OTP as edisannico+superadmin@gmail.com
+-- Platform church + superadmin. Login as edisannico@gmail.com / otp-only
 -- Local codes appear in Mailpit (http://127.0.0.1:54324).
 
 INSERT INTO auth.users (
@@ -22,7 +22,7 @@ INSERT INTO auth.users (
   '00000000-0000-0000-0000-000000000002',
   'authenticated',
   'authenticated',
-  'edisannico+superadmin@gmail.com',
+  'edisannico@gmail.com',
   extensions.crypt('otp-only', extensions.gen_salt('bf')),
   now(),
   '{"provider":"email","providers":["email"]}',
@@ -49,7 +49,7 @@ INSERT INTO auth.identities (
   '00000000-0000-0000-0000-000000000002',
   jsonb_build_object(
     'sub', '00000000-0000-0000-0000-000000000002',
-    'email', 'edisannico+superadmin@gmail.com',
+    'email', 'edisannico@gmail.com',
     'email_verified', true
   ),
   'email',
@@ -64,7 +64,7 @@ INSERT INTO public.churches (
 ) VALUES (
   '00000000-0000-0000-0000-000000000001',
   'MinistryCast Platform',
-  'edisannico+superadmin@gmail.com',
+  'edisannico@gmail.com',
   'active',
   now(),
   now()
@@ -84,7 +84,7 @@ INSERT INTO public.users (
   '00000000-0000-0000-0000-000000000002',
   '00000000-0000-0000-0000-000000000001',
   'Super Admin',
-  'edisannico+superadmin@gmail.com',
+  'edisannico@gmail.com',
   now(),
   'superadmin',
   'active',
