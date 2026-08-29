@@ -1,6 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
+import {
+  createBrowserRouter,
+  createHashRouter,
+  Outlet,
+  RouterProvider,
+} from "react-router-dom";
 import AnimatedOutlet from "./components/AnimatedOutlet";
 import App from "./App";
 import WelcomePage from "./(public)/Welcome";
@@ -40,11 +45,13 @@ function Root() {
 }
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-const router = createBrowserRouter([
+const routes = [
   {
     element: <Root />,
     children: [
+      { path: "/output", element: <Output /> },
       {
         element: <AnimatedOutlet />,
         children: [
@@ -61,7 +68,6 @@ const router = createBrowserRouter([
         children: [
           { path: "/onboarding", element: <Onboarding /> },
           { path: "/live", element: <Live /> },
-          { path: "/output", element: <Output /> },
           {
             element: <PrivateLayout />,
             children: [
@@ -82,7 +88,11 @@ const router = createBrowserRouter([
       },
     ],
   },
-], { basename });
+];
+
+const router = isTauri
+  ? createHashRouter(routes)
+  : createBrowserRouter(routes, { basename });
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

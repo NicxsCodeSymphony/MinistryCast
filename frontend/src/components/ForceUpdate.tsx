@@ -27,6 +27,12 @@ export default function ForceUpdate() {
 
   const run = useCallback(async () => {
     if (!isTauri() || import.meta.env.DEV) return;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      if (getCurrentWindow().label === "projector") return;
+    } catch {
+      return;
+    }
     installing.current = false;
     setPhase("checking");
     try {

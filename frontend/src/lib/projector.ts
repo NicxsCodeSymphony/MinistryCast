@@ -5,10 +5,14 @@ function isTauri() {
 }
 
 export async function openProjectorWindow(presentationId: string) {
-  const path = `/output?presentation=${encodeURIComponent(presentationId)}`;
+  const path = `output?presentation=${encodeURIComponent(presentationId)}`;
   if (!isTauri()) {
     const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-    window.open(`${base}${path}`, "ministrycast-output", "noopener,noreferrer");
+    window.open(
+      `${base}/output?presentation=${encodeURIComponent(presentationId)}`,
+      "ministrycast-output",
+      "noopener,noreferrer",
+    );
     return;
   }
   await invoke("open_projector", { path });
