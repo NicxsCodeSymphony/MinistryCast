@@ -11,7 +11,7 @@ function errorMessage(err: unknown) {
   return "Could not reach the update server.";
 }
 
-type Phase = "hidden" | "downloading" | "restarting" | "error";
+type Phase = "hidden" | "checking" | "downloading" | "restarting" | "error";
 
 export default function ForceUpdate() {
   const [phase, setPhase] = useState<Phase>("hidden");
@@ -28,9 +28,10 @@ export default function ForceUpdate() {
   const run = useCallback(async () => {
     if (!isTauri() || import.meta.env.DEV) return;
     installing.current = false;
+    setPhase("checking");
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
+      const update = await check({ timeout: 60 });
       if (!update) {
         setPhase("hidden");
         setDetail("");
@@ -57,12 +58,7 @@ export default function ForceUpdate() {
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (err) {
-      const message = errorMessage(err);
-      if (!installing.current) {
-        setPhase("hidden");
-        return;
-      }
-      setDetail(message);
+      setDetail(errorMessage(err));
       setPhase("error");
     }
   }, []);
@@ -79,7 +75,7 @@ export default function ForceUpdate() {
     return () => window.clearTimeout(id);
   }, [phase, run]);
 
-  if (phase === "hidden") return null;
+  if (phase === "hidden" || phase === "checking") return null;
 
   const label =
     phase === "restarting"
