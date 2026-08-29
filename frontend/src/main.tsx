@@ -22,11 +22,13 @@ import AdminAudit from "./(private)/pages/admin/AdminAudit";
 import RequireActive from "./(private)/RequireActive";
 import { PrefsProvider } from "./lib/PrefsContext";
 import { ToastProvider } from "./lib/ToastContext";
+import ForceUpdate from "./components/ForceUpdate";
 
 function Root() {
   return (
     <PrefsProvider>
       <ToastProvider>
+        <ForceUpdate />
         <Outlet />
       </ToastProvider>
     </PrefsProvider>

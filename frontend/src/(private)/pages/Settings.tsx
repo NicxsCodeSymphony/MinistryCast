@@ -68,7 +68,6 @@ export default function Settings() {
   const [error, setError] = useState("");
   const [baseline, setBaseline] = useState<string | null>(null);
   const persistSave = useRef<() => Promise<boolean>>(async () => false);
-  const channel = import.meta.env.DEV ? t("settings.dev") : t("settings.stable");
   const storagePct =
     storageQuota > 0 ? Math.min(100, (storageUsed / storageQuota) * 100) : 0;
   const storageLabel =
@@ -466,7 +465,7 @@ export default function Settings() {
                 {t("settings.aboutName")}
               </h3>
               <p className="text-on-surface-variant max-w-2xl">
-                Version {version}-{channel}
+                Version {version}
                 <br />
                 {t("settings.copyright", { year: new Date().getFullYear() })}
                 <br />

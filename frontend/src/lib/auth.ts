@@ -46,13 +46,18 @@ export async function sendEmailOtp(email: string) {
 }
 
 export async function verifyEmailOtp(email: string, token: string) {
-  const { data, error } = await supabase.auth.verifyOtp({
-    email,
-    token,
-    type: "email",
-  });
-  if (error) throw asError(error, "That code is invalid or expired.");
-  return data;
+  const types = ["email", "signup", "magiclink"] as const;
+  let lastError: { message: string } | null = null;
+  for (const type of types) {
+    const { data, error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type,
+    });
+    if (!error) return data;
+    lastError = error;
+  }
+  throw asError(lastError, "That code is invalid or expired.");
 }
 
 const PROFILE_CACHE_KEY = "mc_session_profile";
