@@ -6,3 +6,8 @@
 .env.keys
 .env.local
 .env.*.local
+
+# Local database seed data (never publish)
+seed.sql
+seed*.sql
+**/seed*.sql

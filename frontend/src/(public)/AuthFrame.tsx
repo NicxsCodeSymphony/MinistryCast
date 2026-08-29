@@ -6,6 +6,7 @@ import {
   VideoIcon,
 } from "../components/icons";
 import churchInterior from "../assets/images/church-interior.png";
+import { BUNDLED_VERSION } from "../lib/appVersion";
 
 type AuthFrameProps = {
   children: ReactNode;
@@ -61,7 +62,7 @@ export default function AuthFrame({ children, step = 1 }: AuthFrameProps) {
               <div className="w-3 h-3 rounded-full bg-green-500/80" />
             </div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-white/40 font-semibold">
-              MinistryCast — Production Engine V1.0
+              MinistryCast — v{BUNDLED_VERSION}
             </div>
             <div className="w-12" />
           </div>
@@ -69,7 +70,13 @@ export default function AuthFrame({ children, step = 1 }: AuthFrameProps) {
           <div className="flex-1 grid grid-cols-1 xl:grid-cols-2 min-h-0">
             <div className="p-6 sm:p-10 lg:p-12 xl:p-14 flex flex-col gap-10 border-b xl:border-b-0 xl:border-r border-white/5">
               <div className="flex-1 min-w-0">{children}</div>
-              <AuthSteps current={step} />
+              <div className="space-y-3">
+                <AuthSteps current={step} />
+                <p className="text-[11px] leading-relaxed text-white/40">
+                  Version {BUNDLED_VERSION}. MinistryCast is church presentation
+                  software for lyrics, sermons, setlists, and live output.
+                </p>
+              </div>
             </div>
 
             <div className="p-6 sm:p-10 lg:p-12 flex flex-col gap-6">

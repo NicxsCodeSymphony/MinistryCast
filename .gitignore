@@ -1,3 +1,7 @@
 release/
 *.dmg
 .secrets/
+
+# Local / generated database seed data
+backend/supabase/seed.sql
+backend/supabase/seed*.sql
