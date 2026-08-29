@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Modal from "./Modal";
 import MediaSelectPanel from "./MediaSelectPanel";
 import RosterFormPanel from "./RosterFormPanel";
@@ -58,7 +58,10 @@ type AddServiceItemModalProps = {
   onClose: () => void;
   setlistName: string;
   serviceAt?: string | null;
-  onAdd: (item: ServiceItem) => void;
+  existingSongNumbers?: Record<string, number>;
+  onAdd: (item: ServiceItem) => void | Promise<void>;
+  onAddSongs?: (items: ServiceItem[]) => void | Promise<void>;
+  onRemoveSongs?: (songIds: string[]) => void | Promise<void>;
 };
 
 export default function AddServiceItemModal({
@@ -66,21 +69,32 @@ export default function AddServiceItemModal({
   onClose,
   setlistName,
   serviceAt,
+  existingSongNumbers,
   onAdd,
+  onAddSongs,
+  onRemoveSongs,
 }: AddServiceItemModalProps) {
   const titleId = useId();
   const [step, setStep] = useState<Step>("picker");
+  const requestCloseRef = useRef(onClose);
+  const bindSongClose = useCallback((fn: () => void) => {
+    requestCloseRef.current = fn;
+  }, []);
 
   useEffect(() => {
     if (open) setStep("picker");
   }, [open]);
+
+  useEffect(() => {
+    if (step !== "song") requestCloseRef.current = onClose;
+  }, [onClose, step]);
 
   const compact = step === "picker" || step === "roster";
 
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => requestCloseRef.current()}
       labelledBy={step === "picker" ? titleId : undefined}
       bare={!compact}
       panelClassName={
@@ -158,6 +172,10 @@ export default function AddServiceItemModal({
           onBack={() => setStep("picker")}
           onClose={onClose}
           onAdd={onAdd}
+          onAddMany={onAddSongs}
+          existingSongNumbers={existingSongNumbers}
+          onRemoveSongs={onRemoveSongs}
+          registerRequestClose={bindSongClose}
         />
       ) : null}
 

@@ -53,7 +53,8 @@ import type {
 import { supabase } from "./supabase";
 import { publishPresentation, subscribeLocalPresentation } from "./offline/live";
 import { newId, nowIso } from "./offline/status";
-import { ensureHydrated, setBackupFrequency } from "./offline/sync";
+import { setBackupFrequency } from "./offline/sync";
+import { cachedQuery } from "./offline/queryCache";
 import {
   getRow,
   listRows,
@@ -64,9 +65,7 @@ import {
 } from "./offline/store";
 
 async function ready() {
-  const churchId = await requireChurchId();
-  await ensureHydrated(churchId);
-  return churchId;
+  return requireChurchId();
 }
 
 const VIEW_CHURCH_KEY = "mc.setlistViewChurchId";
@@ -91,9 +90,11 @@ export function writeSetlistViewChurchId(id: string) {
 }
 
 export async function listChurchNames(): Promise<ChurchName[]> {
-  const { data, error } = await supabase.rpc("list_church_names");
-  if (error) throw asError(error, "Could not load churches.");
-  return (data ?? []) as ChurchName[];
+  return cachedQuery("listChurchNames", async () => {
+    const { data, error } = await supabase.rpc("list_church_names");
+    if (error) throw asError(error, "Could not load churches.");
+    return (data ?? []) as ChurchName[];
+  });
 }
 
 async function shareChurchIdsFor(
@@ -317,6 +318,7 @@ async function hydrateSetlistItem(churchId: string, item: SetlistItem): Promise<
 
 export async function listCategories(): Promise<Category[]> {
   const churchId = await ready();
+  return cachedQuery(`listCategories:${churchId}`, async () => {
   let categories = await listRows<Category>(churchId, "categories");
   let restyled = false;
   const legacy = new Set(["primary", "secondary", "tertiary", "error", "accent"]);
@@ -349,6 +351,7 @@ export async function listCategories(): Promise<Category[]> {
     ...row,
     song_count: counts.get(row.id) ?? 0,
   }));
+  });
 }
 
 export async function createCategory(input: {
@@ -407,7 +410,9 @@ export async function deleteCategory(id: string) {
 
 export async function listLanguages(): Promise<Language[]> {
   const churchId = await ready();
-  return sortBy(await listRows<Language>(churchId, "languages"), "name");
+  return cachedQuery(`listLanguages:${churchId}`, async () =>
+    sortBy(await listRows<Language>(churchId, "languages"), "name"),
+  );
 }
 
 export async function listSongs(
@@ -422,6 +427,9 @@ export async function listSongs(
   const churchId = await ready();
   const offset = options.offset ?? 0;
   const limit = options.limit ?? PAGE_SIZE;
+  return cachedQuery(
+    `listSongs:${churchId}:${options.query ?? ""}:${options.categoryId ?? ""}:${options.languageId ?? ""}:${offset}:${limit}`,
+    async () => {
   let songs = await listRows<Song>(churchId, "songs");
   if (options.categoryId) {
     songs = songs.filter((row) => row.category_id === options.categoryId);
@@ -452,13 +460,17 @@ export async function listSongs(
     ...page,
     items: await Promise.all(page.items.map((song) => hydrateSong(churchId, song))),
   };
+    },
+  );
 }
 
 export async function getSong(id: string) {
   const churchId = await ready();
-  const song = await getRow<Song>(churchId, "songs", id);
-  if (!song) throw asError(null, "Could not load that song.");
-  return hydrateSong(churchId, song);
+  return cachedQuery(`getSong:${churchId}:${id}`, async () => {
+    const song = await getRow<Song>(churchId, "songs", id);
+    if (!song) throw asError(null, "Could not load that song.");
+    return hydrateSong(churchId, song);
+  });
 }
 
 async function replaceLyricSections(
@@ -545,6 +557,9 @@ export async function listSermons(
   const churchId = await ready();
   const offset = options.offset ?? 0;
   const limit = options.limit ?? PAGE_SIZE;
+  return cachedQuery(
+    `listSermons:${churchId}:${options.query ?? ""}:${offset}:${limit}:${options.viewChurchId ?? ""}`,
+    async () => {
   let sermons = await listRows<Sermon>(churchId, "sermons");
   const profile = readCachedSessionProfile();
   const admin = Boolean(profile && isSuperadmin(profile));
@@ -573,10 +588,13 @@ export async function listSermons(
     ...page,
     items: await Promise.all(page.items.map((row) => hydrateSermon(churchId, row))),
   };
+    },
+  );
 }
 
 export async function getSermon(id: string) {
   const churchId = await ready();
+  return cachedQuery(`getSermon:${churchId}:${id}`, async () => {
   const sermon = await getRow<Sermon>(churchId, "sermons", id);
   if (!sermon) throw asError(null, "Could not load that sermon.");
   return {
@@ -589,6 +607,7 @@ export async function getSermon(id: string) {
       sermon.church_id,
     ),
   };
+  });
 }
 
 async function replaceSermonChildren(
@@ -840,8 +859,10 @@ export async function reorderSermonSlides(sermonId: string, orderedIds: string[]
 
 export async function listBibleVersions(): Promise<BibleVersion[]> {
   const churchId = await ready();
+  return cachedQuery(`listBibleVersions:${churchId}`, async () => {
   const rows = await listRows<BibleVersion>(churchId, "bible_versions");
   return sortBy(rows, "code");
+  });
 }
 
 export async function bibleVersionIdForCode(code: string): Promise<string | null> {
@@ -996,6 +1017,9 @@ export async function listMedia(
   const churchId = await ready();
   const offset = options.offset ?? 0;
   const limit = options.limit ?? PAGE_SIZE;
+  return cachedQuery(
+    `listMedia:${churchId}:${options.query ?? ""}:${options.kind ?? ""}:${offset}:${limit}`,
+    async () => {
   let rows = await listRows<MediaAsset>(churchId, "media_assets");
   if (options.kind) rows = rows.filter((row) => row.kind === options.kind);
   if (options.query?.trim()) {
@@ -1007,6 +1031,8 @@ export async function listMedia(
     return left < right ? 1 : left > right ? -1 : 0;
   });
   return paginate(sorted, offset, limit);
+    },
+  );
 }
 
 export async function createMediaAsset(input: {
@@ -1047,6 +1073,9 @@ export async function listSetlists(
   const churchId = await ready();
   const offset = options.offset ?? 0;
   const limit = options.limit ?? PAGE_SIZE;
+  return cachedQuery(
+    `listSetlists:${churchId}:${options.query ?? ""}:${offset}:${limit}:${options.viewChurchId ?? ""}`,
+    async () => {
   let rows = await listRows<Setlist>(churchId, "setlists");
   const profile = readCachedSessionProfile();
   const admin = Boolean(profile && isSuperadmin(profile));
@@ -1068,10 +1097,13 @@ export async function listSetlists(
     return aAt < bAt ? 1 : aAt > bAt ? -1 : 0;
   });
   return paginate(sorted, offset, limit);
+    },
+  );
 }
 
 export async function getSetlist(id: string) {
   const churchId = await ready();
+  return cachedQuery(`getSetlist:${churchId}:${id}`, async () => {
   const setlist = await getRow<Setlist>(churchId, "setlists", id);
   if (!setlist) throw asError(null, "Could not load that setlist.");
   const items = (await listRows<SetlistItem>(churchId, "setlist_items"))
@@ -1082,6 +1114,7 @@ export async function getSetlist(id: string) {
     share_church_ids: await setlistShareChurchIds(churchId, id, setlist.church_id),
     items: await Promise.all(items.map((item) => hydrateSetlistItem(churchId, item))),
   };
+  });
 }
 
 export async function createSetlist(input: SetlistInput) {
@@ -1251,8 +1284,10 @@ export async function reorderSetlistItems(
 
 export async function getChurchSettings() {
   const churchId = await ready();
-  const rows = await listRows<ChurchSettings>(churchId, "church_settings");
-  return rows[0] ?? null;
+  return cachedQuery(`getChurchSettings:${churchId}`, async () => {
+    const rows = await listRows<ChurchSettings>(churchId, "church_settings");
+    return rows[0] ?? null;
+  });
 }
 
 export async function saveChurchSettings(input: {
@@ -1263,6 +1298,7 @@ export async function saveChurchSettings(input: {
   transition_ms?: number;
   backup_frequency?: string;
   lyrics_text_size?: string;
+  lyrics_text_style?: string;
   stage_background?: string;
 }) {
   const churchId = await ready();
@@ -1279,6 +1315,8 @@ export async function saveChurchSettings(input: {
     backup_frequency: input.backup_frequency ?? existing?.backup_frequency ?? "hourly",
     lyrics_text_size:
       input.lyrics_text_size ?? existing?.lyrics_text_size ?? "48",
+    lyrics_text_style:
+      input.lyrics_text_style ?? existing?.lyrics_text_style ?? "",
     stage_background: asStageBackground(
       input.stage_background ?? existing?.stage_background,
     ),
@@ -1306,6 +1344,7 @@ export async function patchChurchSettings(
     transition_ms: number;
     backup_frequency: string;
     lyrics_text_size: string;
+    lyrics_text_style: string;
     stage_background: string;
   }>,
 ) {
@@ -1322,6 +1361,8 @@ export async function patchChurchSettings(
       patch.backup_frequency ?? existing?.backup_frequency ?? undefined,
     lyrics_text_size:
       patch.lyrics_text_size ?? existing?.lyrics_text_size ?? undefined,
+    lyrics_text_style:
+      patch.lyrics_text_style ?? existing?.lyrics_text_style ?? undefined,
     stage_background:
       patch.stage_background ?? existing?.stage_background ?? undefined,
   });
@@ -1329,11 +1370,14 @@ export async function patchChurchSettings(
 
 export async function listOutputDisplays(): Promise<OutputDisplay[]> {
   const churchId = await ready();
-  return sortBy(await listRows<OutputDisplay>(churchId, "output_displays"), "sort_order");
+  return cachedQuery(`listOutputDisplays:${churchId}`, async () =>
+    sortBy(await listRows<OutputDisplay>(churchId, "output_displays"), "sort_order"),
+  );
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   const churchId = await ready();
+  return cachedQuery(`getDashboardStats:${churchId}`, async () => {
   const [songs, presentations, setlists] = await Promise.all([
     listRows(churchId, "songs"),
     listRows(churchId, "presentations"),
@@ -1344,10 +1388,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     presentationCount: presentations.length,
     setlistCount: setlists.length,
   };
+  });
 }
 
 export async function listRecentPresentations(limit = 6) {
   const churchId = await ready();
+  return cachedQuery(`listRecentPresentations:${churchId}:${limit}`, async () => {
   const rows = await listRows<Presentation>(churchId, "presentations");
   return [...rows]
     .sort((a, b) => {
@@ -1356,6 +1402,7 @@ export async function listRecentPresentations(limit = 6) {
       return aAt < bAt ? 1 : aAt > bAt ? -1 : 0;
     })
     .slice(0, limit);
+  });
 }
 
 export async function getActivePresentation() {

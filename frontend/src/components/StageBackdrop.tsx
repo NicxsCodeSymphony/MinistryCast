@@ -17,6 +17,9 @@ export default function StageBackdrop({
   if (bg.kind === "none") {
     return <div className={`absolute inset-0 bg-black ${className}`} />;
   }
+  if (bg.id === "white") {
+    return <div className={`absolute inset-0 bg-white ${className}`} />;
+  }
   if (bg.kind === "photo") {
     return (
       <>
@@ -40,6 +43,7 @@ export default function StageBackdrop({
 export function stageBackgroundThumbStyle(id: StageBackgroundId) {
   const bg = stageBackgroundDef(id);
   if (bg.kind === "none") return { background: "#000" };
+  if (bg.id === "white") return { background: "#fff" };
   if (bg.kind === "photo") {
     return {
       backgroundImage: `url(${churchInterior})`,

@@ -41,7 +41,7 @@ function NavItemLink({ item }: { item: NavItem }) {
       to={item.to}
       end={item.end}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+        `flex items-center gap-3 px-4 py-3 rounded-lg ${
           isActive
             ? "border-l-4 border-primary bg-primary/10 text-on-surface font-semibold"
             : "text-on-surface-variant hover:text-on-surface hover:bg-white/5 border-l-4 border-transparent"

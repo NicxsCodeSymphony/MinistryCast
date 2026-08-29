@@ -31,10 +31,11 @@ export default function ForceUpdate() {
     setPhase("checking");
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check({ timeout: 60 });
+      const update = await check({ timeout: 30_000 });
       if (!update) {
         setPhase("hidden");
         setDetail("");
+        setNextVersion("");
         return;
       }
       installing.current = true;
@@ -58,6 +59,13 @@ export default function ForceUpdate() {
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (err) {
+      // A failed check is not an available update. Don't lock the app when
+      // GitHub is slow, offline, or the install is already current.
+      if (!installing.current) {
+        setPhase("hidden");
+        setDetail("");
+        return;
+      }
       setDetail(errorMessage(err));
       setPhase("error");
     }

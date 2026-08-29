@@ -1,6 +1,7 @@
 import { auditLocalMutation } from "../admin";
 import { idbGet, idbSet } from "./idb";
 import { publishContent } from "./live";
+import { invalidateQueries } from "./queryCache";
 import { newId, nowIso, setSyncSnapshot } from "./status";
 
 export type TableName =
@@ -33,6 +34,8 @@ const CONTENT_TABLES = new Set<TableName>([
   "setlist_items",
   "scripture_passages",
   "church_settings",
+  "categories",
+  "languages",
 ]);
 
 let contentQuiet = 0;
@@ -46,6 +49,7 @@ function flushContent() {
 }
 
 function notifyContent(table: TableName) {
+  invalidateQueries();
   if (!CONTENT_TABLES.has(table)) return;
   contentDirty = true;
   window.clearTimeout(contentTimer);
@@ -486,6 +490,7 @@ export async function mergeRemote(
     keptLocal[row.id] = { ...row, __localOnly: false };
   }
   await setCollection(churchId, table, keptLocal);
+  notifyContent(table);
 }
 
 export async function markPushed(churchId: string, table: TableName, id: string) {

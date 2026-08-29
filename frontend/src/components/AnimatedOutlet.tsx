@@ -4,7 +4,7 @@ export default function AnimatedOutlet() {
   const location = useLocation();
   const outlet = useOutlet();
   return (
-    <div key={location.pathname} className="page-enter h-full min-h-0">
+    <div key={location.pathname} className="page-enter h-full min-h-0 overflow-hidden">
       {outlet}
     </div>
   );

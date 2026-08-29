@@ -56,6 +56,7 @@ const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
     "transition_ms",
     "backup_frequency",
     "lyrics_text_size",
+    "lyrics_text_style",
     "stage_background",
     "created_at",
     "updated_at",

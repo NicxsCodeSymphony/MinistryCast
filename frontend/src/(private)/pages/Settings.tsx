@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { PageSkeleton } from "../../components/Skeleton";
 import StageBackgroundPicker from "../../components/StageBackgroundPicker";
 import TextSizePicker from "../../components/TextSizePicker";
+import TextStylePicker from "../../components/TextStylePicker";
 import {
   getChurchSettings,
   listOutputDisplays,
@@ -23,6 +24,11 @@ import {
   DEFAULT_STAGE_BACKGROUND,
   type StageBackgroundId,
 } from "../../lib/stageBackgrounds";
+import {
+  parseLyricTextStyle,
+  serializeLyricTextStyle,
+  type LyricTextStyle,
+} from "../../lib/lyricTextStyle";
 import type { ChurchSettings, OutputDisplay } from "../../lib/types";
 
 function formatBytes(bytes: number) {
@@ -35,6 +41,7 @@ function formatBytes(bytes: number) {
 function settingsDraftKey(input: {
   font: string;
   lyricSize: string;
+  lyricStyle: string;
   transition: string;
   backup: string;
   stageBackground: string;
@@ -51,6 +58,11 @@ export default function Settings() {
   const [language, setLanguage] = useState<Lang>(prefs.language);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
   const [lyricSize, setLyricSize] = useState("48");
+  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>({
+    bold: false,
+    italic: false,
+    underline: false,
+  });
   const [stageBackground, setStageBackground] = useState<StageBackgroundId>(
     DEFAULT_STAGE_BACKGROUND,
   );
@@ -118,6 +130,7 @@ export default function Settings() {
     prefs.setLanguage(nextLang);
     setFont(asStageFont(settings.default_font));
     setLyricSize(settings.lyrics_text_size || "48");
+    setLyricStyle(parseLyricTextStyle(settings.lyrics_text_style));
     setStageBackground(asStageBackground(settings.stage_background));
     setTransition(settings.default_transition || "dissolve");
     setBackup(settings.backup_frequency || "hourly");
@@ -125,6 +138,7 @@ export default function Settings() {
       settingsDraftKey({
         font: asStageFont(settings.default_font),
         lyricSize: settings.lyrics_text_size || "48",
+        lyricStyle: settings.lyrics_text_style || "",
         transition: settings.default_transition || "dissolve",
         backup: settings.backup_frequency || "hourly",
         stageBackground: asStageBackground(settings.stage_background),
@@ -172,6 +186,7 @@ export default function Settings() {
         theme,
         default_font: font,
         lyrics_text_size: lyricSize,
+        lyrics_text_style: serializeLyricTextStyle(lyricStyle),
         default_transition: transition,
         transition_ms: transition === "cut" ? 0 : transition === "wipe" ? 600 : 400,
         backup_frequency: backup,
@@ -195,7 +210,7 @@ export default function Settings() {
   const dirty =
     !loading &&
     baseline !== null &&
-    settingsDraftKey({ font, lyricSize, transition, backup, stageBackground }) !== baseline;
+    settingsDraftKey({ font, lyricSize, lyricStyle: serializeLyricTextStyle(lyricStyle), transition, backup, stageBackground }) !== baseline;
   const draft = useUnsavedDraft(dirty, {
     enabled: !loading,
     title: "Unsaved settings",
@@ -395,6 +410,7 @@ export default function Settings() {
                   {t("settings.lyricsFontHint")}
                 </p>
                 <TextSizePicker value={lyricSize} onChange={setLyricSize} />
+                <TextStylePicker value={lyricStyle} onChange={setLyricStyle} />
               </div>
               <div className="space-y-2">
                 <label className="text-[11px] font-medium text-on-surface-variant block uppercase tracking-widest">

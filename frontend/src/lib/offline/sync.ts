@@ -107,7 +107,7 @@ export async function ensureHydrated(churchId: string) {
   const job = (async () => {
     const meta = await getMeta(churchId);
     await refreshPending(churchId);
-    if (meta.hydratedAt && localStorage.getItem("mc.catalogShares") === "1") return;
+    if (meta.hydratedAt) return;
     if (!isOnline()) return;
     await pullRemote(churchId);
     localStorage.setItem("mc.catalogShares", "1");
@@ -155,17 +155,20 @@ export async function startSyncEngine(churchId: string) {
     lastSyncAt: meta.lastSyncAt,
     frequency: meta.backupFrequency,
   });
-  await ensureHydrated(churchId);
-  const settings = await listRows(churchId, "church_settings");
-  const frequency = settings[0]?.backup_frequency;
-  if (typeof frequency === "string" && frequency) {
-    await setMeta(churchId, { backupFrequency: frequency });
-    setSyncSnapshot({ frequency });
-  }
-  if (engineGen !== gen) return () => undefined;
-  await maybeSyncIfDue(churchId);
-  if (engineGen !== gen) return () => undefined;
-  await schedule(churchId);
+  void (async () => {
+    await ensureHydrated(churchId);
+    if (engineGen !== gen) return;
+    const settings = await listRows(churchId, "church_settings");
+    const frequency = settings[0]?.backup_frequency;
+    if (typeof frequency === "string" && frequency) {
+      await setMeta(churchId, { backupFrequency: frequency });
+      setSyncSnapshot({ frequency });
+    }
+    if (engineGen !== gen) return;
+    await maybeSyncIfDue(churchId);
+    if (engineGen !== gen) return;
+    await schedule(churchId);
+  })();
 
   const onOnline = () => {
     setSyncSnapshot({ online: true });

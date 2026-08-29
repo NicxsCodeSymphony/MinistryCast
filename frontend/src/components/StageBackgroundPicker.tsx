@@ -17,7 +17,7 @@ export default function StageBackgroundPicker({
   return (
     <div
       className={`grid gap-2 ${
-        compact ? "grid-cols-4" : "grid-cols-3 sm:grid-cols-6 lg:grid-cols-11"
+        compact ? "grid-cols-4" : "grid-cols-3 sm:grid-cols-6 lg:grid-cols-12"
       }`}
     >
       {STAGE_BACKGROUNDS.map((bg) => {
@@ -49,6 +49,11 @@ export default function StageBackgroundPicker({
                   <span className="material-symbols-outlined text-white/50 text-[18px]">
                     hide_image
                   </span>
+                </span>
+              ) : null}
+              {bg.id === "white" ? (
+                <span className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-black/70">
+                  Aa
                 </span>
               ) : null}
             </span>

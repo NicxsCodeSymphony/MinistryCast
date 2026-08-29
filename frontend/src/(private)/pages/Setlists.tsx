@@ -167,8 +167,54 @@ export default function Setlists() {
       payload: item.payload,
     });
     setActive(next);
-    setAddItemOpen(false);
-    toast.success("Item added to setlist.");
+    if (item.itemType !== "song") setAddItemOpen(false);
+    toast.success(
+      item.itemType === "song"
+        ? "Song added. Keep picking or tap Done."
+        : "Item added to setlist.",
+    );
+  };
+
+  const addSongsToSetlist = async (items: ServiceItem[]) => {
+    if (!active || !items.length) return;
+    let next = active;
+    for (const item of items) {
+      next = await addSetlistItem(next.id, {
+        itemType: item.itemType,
+        title: item.title,
+        subtitle: item.subtitle,
+        durationSeconds: parseDurationSeconds(item.duration),
+        songId: item.songId,
+        sermonId: item.sermonId,
+        passageId: item.passageId,
+        mediaAssetId: item.mediaAssetId,
+        payload: item.payload,
+      });
+    }
+    setActive(next);
+    toast.success(
+      items.length === 1
+        ? "Song added. Keep picking or tap Done."
+        : `${items.length} songs added. Keep picking or tap Done.`,
+    );
+  };
+
+  const removeSongsFromSetlist = async (songIds: string[]) => {
+    if (!active || !songIds.length) return;
+    let next = active;
+    for (const songId of songIds) {
+      const item = (next.items ?? []).find(
+        (row) => row.item_type === "song" && row.song_id === songId,
+      );
+      if (!item) continue;
+      next = await deleteSetlistItem(next.id, item.id);
+    }
+    setActive(next);
+    toast.success(
+      songIds.length === 1
+        ? "Song removed from setlist."
+        : `${songIds.length} songs removed from setlist.`,
+    );
   };
 
   const moveSetlistItem = (fromId: string, toId: string) => {
@@ -212,6 +258,16 @@ export default function Setlists() {
       ),
     );
   }, [active, query]);
+
+  const existingSongNumbers = useMemo(() => {
+    const numbers: Record<string, number> = {};
+    (active?.items ?? []).forEach((item, index) => {
+      if (item.item_type === "song" && item.song_id && numbers[item.song_id] == null) {
+        numbers[item.song_id] = index + 1;
+      }
+    });
+    return numbers;
+  }, [active?.items]);
 
   if (loading) return <PageSkeleton />;
 
@@ -746,6 +802,7 @@ export default function Setlists() {
         open={addItemOpen}
         setlistName={active?.name ?? "Setlist"}
         serviceAt={active?.service_at}
+        existingSongNumbers={existingSongNumbers}
         onClose={() => setAddItemOpen(false)}
         onAdd={(item) => {
           void addFromServiceItem(item).catch((err) => {
@@ -754,6 +811,28 @@ export default function Setlists() {
             setError(message);
             toast.error(message);
           });
+        }}
+        onAddSongs={async (items) => {
+          try {
+            await addSongsToSetlist(items);
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Could not add songs.";
+            setError(message);
+            toast.error(message);
+            throw err;
+          }
+        }}
+        onRemoveSongs={async (songIds) => {
+          try {
+            await removeSongsFromSetlist(songIds);
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Could not remove songs.";
+            setError(message);
+            toast.error(message);
+            throw err;
+          }
         }}
       />
 

@@ -3,6 +3,7 @@ import SongThumb from "../SongThumb";
 import { listCategories } from "../../lib/api";
 import { lookupSongMusic } from "../../lib/lookupSongMusic";
 import { lookupSongLyrics } from "../../lib/lyricsLookup";
+import { wrapLyricMark } from "../../lib/lyricTextStyle";
 import { formatDuration } from "../../lib/helpers";
 import type { Category } from "../../lib/types";
 import { lookupYoutubeClip, youtubeVideoId } from "../../lib/youtube";
@@ -54,8 +55,23 @@ const LYRIC_SECTIONS = [
 const LYRICS_PLACEHOLDER = `[Intro]
 
 [Verse 1]
-You are here, moving in our midst...
-I worship You, I worship You...`;
+You are here, moving in our midst
+I worship You, I worship You
+
+[Pre-Chorus]
+I stand in awe of You
+Let my heart be still
+
+[Chorus]
+I worship You, I worship You
+You are here, You are here
+
+[Bridge]
+I will wait for You
+I will wait for You
+
+[Outro]
+[C]  [G]  [Am]  [F]`;
 
 const emptyValues: SongFormValues = {
   title: "",
@@ -195,6 +211,23 @@ export default function SongFormModal({
     } finally {
       setSaving(false);
     }
+  };
+
+  const applyLyricMark = (tag: "b" | "i" | "u") => {
+    const field = lyricsEditorOpen
+      ? lyricsEditorRef.current
+      : lyricsFieldRef.current;
+    setLyricsOrigin("manual");
+    setValues((prev) => {
+      const start = field?.selectionStart ?? prev.lyrics.length;
+      const end = field?.selectionEnd ?? prev.lyrics.length;
+      const wrapped = wrapLyricMark(prev.lyrics, start, end, tag);
+      requestAnimationFrame(() => {
+        field?.focus();
+        field?.setSelectionRange(wrapped.start, wrapped.end);
+      });
+      return { ...prev, lyrics: wrapped.next };
+    });
   };
 
   const insertLyricSection = (label: string) => {
@@ -622,6 +655,21 @@ export default function SongFormModal({
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
+                {(["b", "i", "u"] as const).map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => applyLyricMark(tag)}
+                    title={
+                      tag === "b" ? "Bold" : tag === "i" ? "Italic" : "Underline"
+                    }
+                    className={`h-7 w-8 rounded-md text-xs bg-white/5 text-on-surface-variant border border-white/10 hover:bg-primary/15 hover:text-primary hover:border-primary/30 transition-all ${
+                      tag === "b" ? "font-bold" : tag === "i" ? "italic" : "underline"
+                    }`}
+                  >
+                    {tag.toUpperCase()}
+                  </button>
+                ))}
                 {LYRIC_SECTIONS.map((label) => (
                   <button
                     key={label}
@@ -862,6 +910,21 @@ export default function SongFormModal({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 px-5 py-3 border-b border-white/10">
+            {(["b", "i", "u"] as const).map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => applyLyricMark(tag)}
+                title={
+                  tag === "b" ? "Bold" : tag === "i" ? "Italic" : "Underline"
+                }
+                className={`h-7 w-8 rounded-md text-xs bg-white/5 text-on-surface-variant border border-white/10 hover:bg-primary/15 hover:text-primary hover:border-primary/30 ${
+                  tag === "b" ? "font-bold" : tag === "i" ? "italic" : "underline"
+                }`}
+              >
+                {tag.toUpperCase()}
+              </button>
+            ))}
             {LYRIC_SECTIONS.map((label) => (
               <button
                 key={label}

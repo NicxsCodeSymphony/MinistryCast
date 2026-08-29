@@ -212,6 +212,7 @@ export type ChurchSettings = {
   transition_ms: number | null;
   backup_frequency: string | null;
   lyrics_text_size?: string | null;
+  lyrics_text_style?: string | null;
   stage_background?: string | null;
 };
 

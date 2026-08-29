@@ -16,6 +16,7 @@ import { usePrefs } from "../../lib/PrefsContext";
 import { useSearch } from "../../lib/SearchContext";
 import { useToast } from "../../lib/ToastContext";
 import { getSessionProfile, isSuperadmin } from "../../lib/auth";
+import { subscribeContent } from "../../lib/offline/live";
 import { LoadMoreBar } from "../../components/LoadMoreBar";
 import { PAGE_SIZE, type Category } from "../../lib/types";
 
@@ -63,6 +64,9 @@ export default function Categories() {
         setLoading(false);
       }
     })();
+    return subscribeContent(() => {
+      void load();
+    });
   }, []);
 
   const editing = categories.find((card) => card.id === editingId);

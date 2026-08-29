@@ -11,12 +11,14 @@ type RosterStageProps = {
   cue: LiveCue;
   className?: string;
   paddingTop?: number;
+  darkText?: boolean;
 };
 
 export default function RosterStage({
   cue,
   className = "",
   paddingTop = 0,
+  darkText = false,
 }: RosterStageProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -63,22 +65,24 @@ export default function RosterStage({
         <p
           className="text-center font-semibold uppercase"
           style={{
-            color: GOLD,
+            color: darkText ? "#8a6a12" : GOLD,
             fontSize: 28,
             letterSpacing: "0.42em",
-            textShadow: "0 4px 24px rgba(0,0,0,0.7)",
+            textShadow: darkText ? "none" : "0 4px 24px rgba(0,0,0,0.7)",
           }}
         >
           {heading}
         </p>
         {dateLabel ? (
           <h2
-            className="text-center font-semibold text-white mt-5"
+            className={`text-center font-semibold mt-5 ${
+              darkText ? "text-black" : "text-white"
+            }`}
             style={{
               fontSize: 72,
               lineHeight: 1.1,
               letterSpacing: "-0.02em",
-              textShadow: "0 8px 32px rgba(0,0,0,0.75)",
+              textShadow: darkText ? "none" : "0 8px 32px rgba(0,0,0,0.75)",
             }}
           >
             {dateLabel}
@@ -102,7 +106,7 @@ export default function RosterStage({
               style={{
                 fontSize: 36,
                 lineHeight: 1.2,
-                textShadow: "0 6px 24px rgba(0,0,0,0.7)",
+                textShadow: darkText ? "none" : "0 6px 24px rgba(0,0,0,0.7)",
               }}
             >
               <span
@@ -114,14 +118,25 @@ export default function RosterStage({
               <span
                 className="flex-1 min-w-[48px]"
                 style={{
-                  borderBottom: "2px dotted rgba(255,255,255,0.28)",
+                  borderBottom: darkText
+                    ? "2px dotted rgba(0,0,0,0.28)"
+                    : "2px dotted rgba(255,255,255,0.28)",
                   transform: "translateY(-8px)",
                 }}
                 aria-hidden
               />
               <span
-                className="shrink-0 text-right font-semibold text-white"
-                style={{ minWidth: "28%", color: row.name ? "#fff" : "rgba(255,255,255,0.4)" }}
+                className="shrink-0 text-right font-semibold"
+                style={{
+                  minWidth: "28%",
+                  color: darkText
+                    ? row.name
+                      ? "#111"
+                      : "rgba(0,0,0,0.35)"
+                    : row.name
+                      ? "#fff"
+                      : "rgba(255,255,255,0.4)",
+                }}
               >
                 {row.name || "—"}
               </span>

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import CueStage from "./CueStage";
 import StageBackdrop from "./StageBackdrop";
 import { getChurchSettings } from "../lib/api";
-import { asStageBackground, type StageBackgroundId } from "../lib/stageBackgrounds";
+import { asStageBackground, stageUsesDarkText, type StageBackgroundId } from "../lib/stageBackgrounds";
 import type { LiveCue } from "../lib/types";
 
 type SermonStagePreviewProps = {
@@ -24,11 +24,13 @@ export default function SermonStagePreview({
 
   return (
     <div
-      className={`relative w-full aspect-video overflow-hidden rounded-xl bg-black ${className}`}
+      className={`relative w-full aspect-video overflow-hidden rounded-xl ${
+        stageUsesDarkText(stageBg) ? "bg-white" : "bg-black"
+      } ${className}`}
     >
       <StageBackdrop id={stageBg} />
       <div className="absolute inset-0">
-        <CueStage cue={cue} />
+        <CueStage cue={cue} darkText={stageUsesDarkText(stageBg)} />
       </div>
     </div>
   );

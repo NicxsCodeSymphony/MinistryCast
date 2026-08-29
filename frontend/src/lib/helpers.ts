@@ -201,7 +201,7 @@ export function sermonSizePx(size?: string | null) {
   if (!size) return 40;
   const numeric = Number(size);
   if (Number.isFinite(numeric) && numeric > 0) {
-    return Math.min(160, Math.max(12, Math.round(numeric)));
+    return Math.min(160, Math.max(1, Math.round(numeric)));
   }
   return SERMON_TEXT_SIZES.find((row) => row.id === size)?.px ?? 40;
 }

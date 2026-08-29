@@ -1,5 +1,6 @@
 export const STAGE_BACKGROUND_IDS = [
   "none",
+  "white",
   "sanctuary",
   "midnight",
   "goldHaze",
@@ -25,6 +26,12 @@ export type StageBackgroundDef = {
 
 export const STAGE_BACKGROUNDS: StageBackgroundDef[] = [
   { id: "none", label: "None", kind: "none" },
+  {
+    id: "white",
+    label: "White",
+    kind: "wash",
+    style: { background: "#ffffff" },
+  },
   { id: "sanctuary", label: "Sanctuary", kind: "photo" },
   {
     id: "midnight",
@@ -114,6 +121,10 @@ export function asStageBackground(raw?: string | null): StageBackgroundId {
     return raw as StageBackgroundId;
   }
   return DEFAULT_STAGE_BACKGROUND;
+}
+
+export function stageUsesDarkText(id?: string | null) {
+  return asStageBackground(id) === "white";
 }
 
 export function stageBackgroundDef(id?: string | null): StageBackgroundDef {

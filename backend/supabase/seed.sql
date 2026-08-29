@@ -91,3 +91,30 @@ INSERT INTO public.users (
   now(),
   now()
 );
+
+SELECT public.bootstrap_church('00000000-0000-0000-0000-000000000001');
+
+INSERT INTO public.songs (
+  id, church_id, title, artist, musical_key, bpm, time_signature,
+  created_at, updated_at
+) VALUES (
+  '00000000-0000-0000-0000-000000000010',
+  '00000000-0000-0000-0000-000000000001',
+  'Here As In Heaven',
+  'Elevation Worship',
+  'C',
+  74,
+  '4/4',
+  now(),
+  now()
+);
+
+INSERT INTO public.song_lyric_sections (
+  song_id, section, content, sort_order, created_at, updated_at
+) VALUES
+  ('00000000-0000-0000-0000-000000000010', 'Intro', '[C]  [G]  [Am]  [F]', 0, now(), now()),
+  ('00000000-0000-0000-0000-000000000010', 'Verse 1', E'You are here, moving in our midst\nI worship You, I worship You', 1, now(), now()),
+  ('00000000-0000-0000-0000-000000000010', 'Pre-Chorus', E'I stand in awe of You\nLet my heart be still', 2, now(), now()),
+  ('00000000-0000-0000-0000-000000000010', 'Chorus', E'I worship You, I worship You\nYou are here, You are here', 3, now(), now()),
+  ('00000000-0000-0000-0000-000000000010', 'Bridge', E'I will wait for You\nI will wait for You', 4, now(), now()),
+  ('00000000-0000-0000-0000-000000000010', 'Outro', '[C]  [G]  [Am]  [F]', 5, now(), now());

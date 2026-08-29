@@ -51,7 +51,6 @@ export default function RequireActive() {
   }, []);
 
   useEffect(() => {
-    setReady(false);
     setRedirect(null);
     void (async () => {
       try {

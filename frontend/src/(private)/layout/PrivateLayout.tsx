@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import AnimatedOutlet from "../../components/AnimatedOutlet";
+import KeepAliveOutlet from "../../components/KeepAliveOutlet";
 import { SearchProvider, useSearch } from "../../lib/SearchContext";
 import { usePrefs } from "../../lib/PrefsContext";
 import Sidebar from "../components/Sidebar";
@@ -37,8 +37,8 @@ function LayoutBody() {
           searchPlaceholder={placeholderFor(pathname, t)}
           pageTitle={pathname.startsWith("/settings") ? t("nav.settings") : undefined}
         />
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <AnimatedOutlet />
+        <div className="flex-1 min-h-0 overflow-hidden isolate">
+          <KeepAliveOutlet />
         </div>
       </div>
     </div>

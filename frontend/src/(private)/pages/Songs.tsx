@@ -28,6 +28,7 @@ import { usePrefs } from "../../lib/PrefsContext";
 import { useSearch } from "../../lib/SearchContext";
 import { useToast } from "../../lib/ToastContext";
 import { getSessionProfile, isSuperadmin } from "../../lib/auth";
+import { subscribeContent } from "../../lib/offline/live";
 
 function toInput(song: Song): SongFormValues {
   return {
@@ -124,6 +125,9 @@ export default function Songs() {
 
   useEffect(() => {
     void load(0, false);
+    return subscribeContent(() => {
+      void load(0, false);
+    });
   }, [debounced, categoryId, languageId]);
 
   useEffect(() => {

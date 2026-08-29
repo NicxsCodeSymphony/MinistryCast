@@ -14,7 +14,11 @@ import {
 } from "../../lib/api";
 import { setlistFingerprint, subscribeContent } from "../../lib/offline/live";
 import { asStageFont, DEFAULT_STAGE_FONT } from "../../lib/stageFonts";
-import { asStageBackground, type StageBackgroundId } from "../../lib/stageBackgrounds";
+import { asStageBackground, stageUsesDarkText, type StageBackgroundId } from "../../lib/stageBackgrounds";
+import {
+  parseLyricTextStyle,
+  type LyricTextStyle,
+} from "../../lib/lyricTextStyle";
 import {
   asStageTransition,
   lyricTransitionClass,
@@ -30,6 +34,11 @@ export default function Output() {
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
   const [lyricSize, setLyricSize] = useState("48");
   const [stageBg, setStageBg] = useState<StageBackgroundId>("sanctuary");
+  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>({
+    bold: false,
+    italic: false,
+    underline: false,
+  });
   const [transitionStyle, setTransitionStyle] = useState<StageTransition>("dissolve");
   const [error, setError] = useState("");
   const setlistFp = useRef("");
@@ -55,6 +64,7 @@ export default function Output() {
         if (!cancelled) {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || "48");
+          setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
           setStageBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
         }
@@ -83,6 +93,7 @@ export default function Output() {
         .then((settings) => {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || "48");
+          setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
           setStageBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
         })
@@ -101,6 +112,7 @@ export default function Output() {
   const index = presentation ? cueIndexFor(presentation, cues) : 0;
   const cue: LiveCue | undefined = cues[index];
   const ms = presentation?.transition_ms ?? 400;
+  const darkText = stageUsesDarkText(stageBg);
 
   useEffect(() => {
     const block = (event: KeyboardEvent) => {
@@ -137,7 +149,7 @@ export default function Output() {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-black select-none">
+    <div className={`relative h-full w-full overflow-hidden select-none ${darkText ? "bg-white" : "bg-black"}`}>
       <StageBackdrop id={stageBg} />
 
       {presentation?.is_blackout ? (
@@ -160,7 +172,13 @@ export default function Output() {
           className={`absolute inset-0 z-10 ${lyricTransitionClass(transitionStyle, ms)}`}
           style={{ animationDuration: `${ms}ms` }}
         >
-          <CueStage cue={cue} font={font} lyricSize={lyricSize} />
+          <CueStage
+            cue={cue}
+            font={font}
+            lyricSize={lyricSize}
+            darkText={darkText}
+            lyricStyle={lyricStyle}
+          />
         </div>
       ) : null}
 
@@ -174,6 +192,7 @@ export default function Output() {
           }
           page={presentation.verse_overlay_page ?? 0}
           pageSize={presentation.verse_overlay_take || 5}
+          darkText={darkText}
         />
       ) : null}
     </div>

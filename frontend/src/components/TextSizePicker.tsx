@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { SERMON_TEXT_SIZES, sermonSizePx } from "../lib/helpers";
 
 type TextSizePickerProps = {
@@ -6,12 +7,29 @@ type TextSizePickerProps = {
   disabled?: boolean;
 };
 
+const MIN_PX = 1;
+const MAX_PX = 160;
+
+function commitPx(raw: string) {
+  const next = Number(raw);
+  if (!Number.isFinite(next)) return null;
+  const rounded = Math.round(next);
+  if (rounded < MIN_PX || rounded > MAX_PX) return null;
+  return String(rounded);
+}
+
 export default function TextSizePicker({
   value,
   onChange,
   disabled,
 }: TextSizePickerProps) {
   const px = sermonSizePx(value);
+  const [draft, setDraft] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(null);
+  }, [value]);
+
   return (
     <div className="flex items-center gap-1" role="group" aria-label="Text size">
       {SERMON_TEXT_SIZES.map((size) => {
@@ -34,15 +52,20 @@ export default function TextSizePicker({
         );
       })}
       <input
-        type="number"
-        min={12}
-        max={160}
+        type="text"
+        inputMode="numeric"
         disabled={disabled}
-        value={px}
+        value={draft ?? String(px)}
         onChange={(event) => {
-          const next = Number(event.target.value);
-          if (!Number.isFinite(next)) return;
-          onChange(String(Math.min(160, Math.max(12, Math.round(next)))));
+          const raw = event.target.value.replace(/[^\d]/g, "");
+          setDraft(raw);
+          const committed = commitPx(raw);
+          if (committed) onChange(committed);
+        }}
+        onBlur={() => {
+          const committed = commitPx(draft ?? String(px));
+          if (committed) onChange(committed);
+          setDraft(null);
         }}
         className="w-14 h-8 ml-1 rounded-md bg-white/5 border border-white/10 text-center text-xs text-on-surface disabled:opacity-40"
         aria-label="Font size in pixels"

@@ -4,6 +4,8 @@ import { sermonSizePx, wrapLine } from "../lib/helpers";
 import { renderSermonMarkup } from "../lib/sermonMarkup";
 import { DEFAULT_STAGE_FONT, stageFontFamily } from "../lib/stageFonts";
 import type { LiveCue } from "../lib/types";
+import type { LyricTextStyle } from "../lib/lyricTextStyle";
+import { EMPTY_LYRIC_TEXT_STYLE } from "../lib/lyricTextStyle";
 import RosterStage from "./RosterStage";
 
 type CueStageProps = {
@@ -12,6 +14,8 @@ type CueStageProps = {
   paddingTop?: number;
   font?: string | null;
   lyricSize?: string | null;
+  darkText?: boolean;
+  lyricStyle?: LyricTextStyle;
   onVerseClick?: (raw: string, parsed: ParsedBibleRef) => void;
 };
 
@@ -25,6 +29,7 @@ export default function CueStage(props: CueStageProps) {
         cue={props.cue}
         className={props.className}
         paddingTop={props.paddingTop}
+        darkText={props.darkText}
       />
     );
   }
@@ -37,6 +42,8 @@ function LyricCueStage({
   paddingTop = 0,
   font = DEFAULT_STAGE_FONT,
   lyricSize = "48",
+  darkText = false,
+  lyricStyle = EMPTY_LYRIC_TEXT_STYLE,
   onVerseClick,
 }: CueStageProps) {
   const sermon = cue?.kind === "sermon";
@@ -74,7 +81,7 @@ function LyricCueStage({
     const text = textRef.current;
     if (!box || !text || blank || !bodyLines.length) return;
 
-    const minPx = 12;
+    const minPx = Math.min(1, maxPx);
 
     const overflows = () =>
       text.scrollHeight > box.clientHeight + 1 ||
@@ -104,7 +111,7 @@ function LyricCueStage({
     const observer = new ResizeObserver(fit);
     observer.observe(box);
     return () => observer.disconnect();
-  }, [blank, bodyLines.length, cue?.id, cue?.kind, cue?.textSize, lineKey, maxPx, sermon]);
+  }, [blank, bodyLines.length, cue?.id, cue?.kind, cue?.textSize, lineKey, lyricStyle, maxPx, sermon]);
 
   const verseSize = Math.max(16, Math.round(fontPx * (titleSlide ? 0.32 : 0.42)));
 
@@ -128,7 +135,11 @@ function LyricCueStage({
             >
               {headerTitle ? (
                 <p
-                  className="text-white/90 font-semibold tracking-wide drop-shadow-[0_4px_16px_rgba(0,0,0,0.65)]"
+                  className={`font-semibold tracking-wide ${
+                    darkText
+                      ? "text-neutral-900"
+                      : "text-white/90 drop-shadow-[0_4px_16px_rgba(0,0,0,0.65)]"
+                  }`}
                   style={{
                     fontSize: `${TITLE_PX}px`,
                     lineHeight: 1.2,
@@ -140,7 +151,11 @@ function LyricCueStage({
               ) : null}
               {sectionLabel ? (
                 <p
-                  className="text-white/70 uppercase tracking-[0.18em] mt-1 drop-shadow-[0_4px_16px_rgba(0,0,0,0.65)]"
+                  className={`uppercase tracking-[0.18em] mt-1 ${
+                    darkText
+                      ? "text-neutral-600"
+                      : "text-white/70 drop-shadow-[0_4px_16px_rgba(0,0,0,0.65)]"
+                  }`}
                   style={{
                     fontSize: `${SECTION_PX}px`,
                     lineHeight: 1.2,
@@ -164,8 +179,21 @@ function LyricCueStage({
             {bodyLines.length ? (
               <div
                 ref={textRef}
-                className="text-white leading-[1.22] drop-shadow-[0_6px_24px_rgba(0,0,0,0.65)] w-full max-w-none break-words"
-                style={{ fontSize: `${fontPx}px`, fontFamily: bodyFamily }}
+                className={`leading-[1.22] w-full max-w-none break-words ${
+                  darkText
+                    ? "text-black"
+                    : "text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.65)]"
+                }`}
+                style={{
+                  fontSize: `${fontPx}px`,
+                  fontFamily: bodyFamily,
+                  fontWeight: cue?.kind === "lyric" && lyricStyle.bold ? 700 : undefined,
+                  fontStyle: cue?.kind === "lyric" && lyricStyle.italic ? "italic" : undefined,
+                  textDecoration:
+                    cue?.kind === "lyric" && lyricStyle.underline
+                      ? "underline"
+                      : undefined,
+                }}
               >
                 {bodyLines.map((line, index) =>
                   line ? (
@@ -190,8 +218,12 @@ function LyricCueStage({
 
           {footerVerse ? (
             <div
-              className={`shrink-0 pt-4 drop-shadow-[0_4px_16px_rgba(0,0,0,0.65)] break-words ${
+              className={`shrink-0 pt-4 break-words ${
                 startAlign ? "text-left" : "text-center"
+              } ${
+                darkText
+                  ? "text-neutral-800"
+                  : "drop-shadow-[0_4px_16px_rgba(0,0,0,0.65)]"
               }`}
               style={{ fontSize: `${verseSize}px`, fontFamily: metaFamily }}
             >

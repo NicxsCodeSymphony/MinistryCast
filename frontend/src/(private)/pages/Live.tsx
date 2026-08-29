@@ -7,6 +7,7 @@ import StageBackgroundPicker from "../../components/StageBackgroundPicker";
 import VerseOverlay from "../../components/VerseOverlay";
 import { PageSkeleton } from "../../components/Skeleton";
 import TextSizePicker from "../../components/TextSizePicker";
+import TextStylePicker from "../../components/TextStylePicker";
 import {
   buildCues,
   cueIndexFor,
@@ -43,8 +44,14 @@ import { asStageFont, DEFAULT_STAGE_FONT, STAGE_FONTS } from "../../lib/stageFon
 import {
   asStageBackground,
   DEFAULT_STAGE_BACKGROUND,
+  stageUsesDarkText,
   type StageBackgroundId,
 } from "../../lib/stageBackgrounds";
+import {
+  parseLyricTextStyle,
+  serializeLyricTextStyle,
+  type LyricTextStyle,
+} from "../../lib/lyricTextStyle";
 import { asStageTransition, lyricTransitionClass, type StageTransition } from "../../lib/stageTransition";
 import { useToast } from "../../lib/ToastContext";
 import type { LiveCue, Presentation, Setlist } from "../../lib/types";
@@ -69,6 +76,11 @@ export default function Live() {
   const [pointSync, setPointSync] = useState(0);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
   const [lyricSize, setLyricSize] = useState("48");
+  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>({
+    bold: false,
+    italic: false,
+    underline: false,
+  });
   const [stageBg, setStageBg] = useState<StageBackgroundId>(DEFAULT_STAGE_BACKGROUND);
   const [transitionStyle, setTransitionStyle] = useState<StageTransition>("dissolve");
   const [rosterDraft, setRosterDraft] = useState<RosterPayload | null>(null);
@@ -114,6 +126,7 @@ export default function Live() {
       const settings = await getChurchSettings();
       setFont(asStageFont(settings?.default_font));
       setLyricSize(settings?.lyrics_text_size || "48");
+      setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
       setStageBg(asStageBackground(settings?.stage_background));
       setTransitionStyle(asStageTransition(settings?.default_transition));
     } catch {
@@ -155,6 +168,7 @@ export default function Live() {
         .then((settings) => {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || "48");
+          setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
           setStageBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
         })
@@ -187,6 +201,7 @@ export default function Live() {
   const index = live ? liveIndex : previewIndex;
   const active: LiveCue | undefined = cues[index];
   const nextCue = cues[index + 1];
+  const darkText = stageUsesDarkText(stageBg);
   const transitionSec = ((presentation?.transition_ms ?? 400) / 1000).toFixed(1);
   const currentItem = setlist?.items?.find((row) => row.id === active?.itemId);
   const currentSlide = currentItem?.sermon?.slides?.find(
@@ -734,6 +749,8 @@ export default function Live() {
                       paddingTop={52}
                       font={font}
                       lyricSize={lyricSize}
+                      lyricStyle={lyricStyle}
+                      darkText={darkText}
                       onVerseClick={live ? openVerse : undefined}
                     />
                   </div>
@@ -766,6 +783,7 @@ export default function Live() {
                     }).then(setPresentation);
                   }}
                   onClose={closeVerse}
+                  darkText={darkText}
                 />
               ) : null}
             </div>
@@ -1030,6 +1048,20 @@ export default function Live() {
                 setLyricSize(size);
                 void patchChurchSettings({ lyrics_text_size: size }).catch((err) =>
                   setError(err instanceof Error ? err.message : "Could not change size."),
+                );
+              }}
+            />
+            <TextStylePicker
+              disabled={!live}
+              value={lyricStyle}
+              onChange={(next) => {
+                if (!live) return;
+                if (presentation?.verse_overlay_ref && active?.kind !== "lyric") return;
+                setLyricStyle(next);
+                void patchChurchSettings({
+                  lyrics_text_style: serializeLyricTextStyle(next),
+                }).catch((err) =>
+                  setError(err instanceof Error ? err.message : "Could not change style."),
                 );
               }}
             />
