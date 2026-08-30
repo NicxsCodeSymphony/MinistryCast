@@ -1101,9 +1101,11 @@ export async function listSetlists(
   );
 }
 
-export async function getSetlist(id: string) {
+export async function getSetlist(id: string, options?: { fresh?: boolean }) {
   const churchId = await ready();
-  return cachedQuery(`getSetlist:${churchId}:${id}`, async () => {
+  return cachedQuery(
+    `getSetlist:${churchId}:${id}`,
+    async () => {
   const setlist = await getRow<Setlist>(churchId, "setlists", id);
   if (!setlist) throw asError(null, "Could not load that setlist.");
   const items = (await listRows<SetlistItem>(churchId, "setlist_items"))
@@ -1114,7 +1116,9 @@ export async function getSetlist(id: string) {
     share_church_ids: await setlistShareChurchIds(churchId, id, setlist.church_id),
     items: await Promise.all(items.map((item) => hydrateSetlistItem(churchId, item))),
   };
-  });
+    },
+    options,
+  );
 }
 
 export async function createSetlist(input: SetlistInput) {
@@ -1282,12 +1286,16 @@ export async function reorderSetlistItems(
   return getSetlist(setlistId);
 }
 
-export async function getChurchSettings() {
+export async function getChurchSettings(options?: { fresh?: boolean }) {
   const churchId = await ready();
-  return cachedQuery(`getChurchSettings:${churchId}`, async () => {
+  return cachedQuery(
+    `getChurchSettings:${churchId}`,
+    async () => {
     const rows = await listRows<ChurchSettings>(churchId, "church_settings");
     return rows[0] ?? null;
-  });
+    },
+    options,
+  );
 }
 
 export async function saveChurchSettings(input: {

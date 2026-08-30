@@ -12,7 +12,7 @@ import {
   getSetlist,
   subscribePresentation,
 } from "../../lib/api";
-import { setlistFingerprint, subscribeContent } from "../../lib/offline/live";
+import { setlistFingerprint, subscribeContent, subscribeStageSnapshot } from "../../lib/offline/live";
 import { asStageFont, DEFAULT_STAGE_FONT } from "../../lib/stageFonts";
 import { asStageBackground, stageUsesDarkText, type StageBackgroundId } from "../../lib/stageBackgrounds";
 import {
@@ -95,8 +95,8 @@ export default function Output() {
     const setlistId = presentation?.setlist_id;
     if (!setlistId) return;
     const reload = () => {
-      void getSetlist(setlistId).then(applySetlist).catch(() => undefined);
-      void getChurchSettings()
+      void getSetlist(setlistId, { fresh: true }).then(applySetlist).catch(() => undefined);
+      void getChurchSettings({ fresh: true })
         .then((settings) => {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || "48");
@@ -106,11 +106,21 @@ export default function Output() {
         })
         .catch(() => undefined);
     };
-    const unsub = subscribeContent(reload);
+    const unsubContent = subscribeContent(reload);
+    const unsubStage = subscribeStageSnapshot((snapshot) => {
+      if (snapshot.setlistId !== setlistId) return;
+      applySetlist(snapshot.setlist);
+      setFont(asStageFont(snapshot.font));
+      setLyricSize(snapshot.lyricSize || "48");
+      setLyricStyle(snapshot.lyricStyle);
+      setStageBg(asStageBackground(snapshot.stageBg));
+      setTransitionStyle(asStageTransition(snapshot.transitionStyle));
+    });
     reload();
-    const timer = window.setInterval(reload, 1500);
+    const timer = window.setInterval(reload, 800);
     return () => {
-      unsub();
+      unsubContent();
+      unsubStage();
       window.clearInterval(timer);
     };
   }, [presentation?.setlist_id]);
@@ -175,7 +185,7 @@ export default function Output() {
 
       {!presentation?.show_logo && !presentation?.is_blackout ? (
         <div
-          key={cue?.id ?? "empty"}
+          key={`${cue?.id ?? "empty"}-${cue?.preview ?? ""}-${font}-${lyricSize}-${stageBg}`}
           className={`absolute inset-0 z-10 ${lyricTransitionClass(transitionStyle, ms)}`}
           style={{ animationDuration: `${ms}ms` }}
         >
@@ -199,7 +209,6 @@ export default function Output() {
           }
           page={presentation.verse_overlay_page ?? 0}
           pageSize={presentation.verse_overlay_take || 5}
-          darkText={darkText}
         />
       ) : null}
     </div>

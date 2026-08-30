@@ -201,7 +201,7 @@ function LyricCueStage({
                       key={`${index}-${line}`}
                       className="block w-full break-words whitespace-pre-wrap"
                     >
-                      {renderSermonMarkup(line, onVerseClick)}
+                      {renderSermonMarkup(line, onVerseClick, false, darkText)}
                     </span>
                   ) : (
                     <span
@@ -229,7 +229,7 @@ function LyricCueStage({
             >
               {wrapLine(footerVerse, 42).map((row, index) => (
                 <span key={`${index}-${row}`} className="block w-full break-words">
-                  {renderSermonMarkup(row, onVerseClick, true)}
+                  {renderSermonMarkup(row, onVerseClick, true, darkText)}
                 </span>
               ))}
             </div>

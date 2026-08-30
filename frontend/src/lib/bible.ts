@@ -32,9 +32,9 @@ export const FREE_BIBLE_TRANSLATIONS: {
   value: FreeBibleTranslation;
   label: string;
 }[] = [
-  { value: "kjv", label: "KJV (King James)" },
-  { value: "web", label: "WEB (World English)" },
-  { value: "ceb", label: "Bisaya KJV (Ang Biblia)" },
+  { value: "ceb", label: "Bisaya" },
+  { value: "kjv", label: "English (KJV)" },
+  { value: "web", label: "English (WEB)" },
 ];
 
 export const BIBLE_BOOKS: BibleBook[] = [

@@ -20,7 +20,6 @@ export type SermonRun = {
 };
 
 const COLOR = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
-const VERSE_COLOR = "#f0c674";
 
 function escapeText(value: string) {
   return value
@@ -215,6 +214,7 @@ export function renderSermonMarkup(
   line: string,
   onVerseClick?: (raw: string, parsed: ParsedBibleRef) => void,
   emphasize = false,
+  darkText = false,
 ): ReactNode {
   const runs = parseSermonRuns(line);
   const nodes: ReactNode[] = [];
@@ -225,11 +225,12 @@ export function renderSermonMarkup(
       continue;
     }
     const refs = extractBibleReferences(run.text);
+    const verseColor = run.color || (darkText ? "#000000" : undefined);
     const style: CSSProperties = {
-      fontWeight: run.bold ? 700 : undefined,
+      fontWeight: run.bold ? 700 : emphasize ? 600 : undefined,
       fontStyle: run.italic ? "italic" : undefined,
       textDecoration: run.underline ? "underline" : undefined,
-      color: run.color || (emphasize ? VERSE_COLOR : undefined),
+      color: verseColor,
     };
     if (!refs.length) {
       nodes.push(
@@ -256,10 +257,17 @@ export function renderSermonMarkup(
             event.stopPropagation();
             onVerseClick?.(ref.raw, ref.parsed);
           }}
-          className={`inline bg-transparent p-0 m-0 border-0 font-semibold underline decoration-2 underline-offset-4 whitespace-nowrap align-baseline ${
+          className={`inline bg-transparent p-0 m-0 border-0 font-bold underline decoration-2 underline-offset-4 whitespace-nowrap align-baseline ${
             onVerseClick ? "cursor-pointer hover:opacity-90" : "cursor-default"
           }`}
-          style={{ ...style, color: VERSE_COLOR, font: "inherit" }}
+          style={{
+            ...style,
+            color: verseColor,
+            fontFamily: "inherit",
+            fontSize: "inherit",
+            fontWeight: 700,
+            textDecoration: "underline",
+          }}
         >
           {ref.raw}
         </button>,

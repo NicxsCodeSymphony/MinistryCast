@@ -31,9 +31,15 @@ import {
   updateSetlistItem,
 } from "../../lib/api";
 import { insertSermonGap, isSermonSpace, isTypingTarget, moveItem } from "../../lib/helpers";
-import { formatBibleReference, type ParsedBibleRef } from "../../lib/bible";
+import {
+  formatBibleReference,
+  FREE_BIBLE_TRANSLATIONS,
+  isFreeBibleTranslation,
+  type FreeBibleTranslation,
+  type ParsedBibleRef,
+} from "../../lib/bible";
 import { useHoldReorder } from "../../lib/holdDrag";
-import { subscribeContent, setlistFingerprint } from "../../lib/offline/live";
+import { subscribeContent, setlistFingerprint, publishStageSnapshot } from "../../lib/offline/live";
 import { closeProjectorWindow, openProjectorWindow } from "../../lib/projector";
 import {
   formatRosterDate,
@@ -163,8 +169,8 @@ export default function Live() {
   useEffect(() => {
     if (!setlistId) return;
     const reload = () => {
-      void getSetlist(setlistId).then(applySetlist).catch(() => undefined);
-      void getChurchSettings()
+      void getSetlist(setlistId, { fresh: true }).then(applySetlist).catch(() => undefined);
+      void getChurchSettings({ fresh: true })
         .then((settings) => {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || "48");
@@ -175,12 +181,34 @@ export default function Live() {
         .catch(() => undefined);
     };
     const unsub = subscribeContent(reload);
-    const timer = window.setInterval(reload, 1500);
+    const timer = window.setInterval(reload, 800);
     return () => {
       unsub();
       window.clearInterval(timer);
     };
   }, [setlistId, applySetlist]);
+
+  useEffect(() => {
+    if (!setlist || presentation?.status !== "live") return;
+    publishStageSnapshot({
+      setlistId: setlist.id,
+      setlist,
+      font,
+      lyricSize,
+      lyricStyle,
+      stageBg,
+      transitionStyle,
+      at: Date.now(),
+    });
+  }, [
+    presentation?.status,
+    setlist,
+    font,
+    lyricSize,
+    lyricStyle,
+    stageBg,
+    transitionStyle,
+  ]);
 
   useEffect(() => {
     if (!presentation?.started_at || presentation.status !== "live") {
@@ -216,7 +244,7 @@ export default function Live() {
 
   const refreshSetlist = useCallback(() => {
     if (!setlistId) return Promise.resolve();
-    return getSetlist(setlistId).then(applySetlist);
+    return getSetlist(setlistId, { fresh: true }).then(applySetlist);
   }, [setlistId, applySetlist]);
 
   const { bind: bindCue } = useHoldReorder(
@@ -322,6 +350,31 @@ export default function Live() {
     [cues.length, goToCue, live],
   );
 
+  const readVerseTranslation = (): FreeBibleTranslation => {
+    const current = presentation?.verse_overlay_translation;
+    if (current && isFreeBibleTranslation(current)) return current;
+    try {
+      const stored = localStorage.getItem("mc.verseTranslation");
+      if (stored && isFreeBibleTranslation(stored)) return stored;
+    } catch {
+      /* ignore */
+    }
+    return "ceb";
+  };
+
+  const setVerseTranslation = (next: FreeBibleTranslation) => {
+    try {
+      localStorage.setItem("mc.verseTranslation", next);
+    } catch {
+      /* ignore */
+    }
+    if (!presentation) return;
+    void updatePresentation(presentation.id, {
+      verse_overlay_translation: next,
+      verse_overlay_page: 0,
+    }).then(setPresentation);
+  };
+
   const openVerse = (_raw: string, parsed: ParsedBibleRef) => {
     if (!live || !presentation) return;
     void updatePresentation(presentation.id, {
@@ -330,7 +383,7 @@ export default function Live() {
         parsed.chapter,
         parsed.verses,
       ),
-      verse_overlay_translation: "ceb",
+      verse_overlay_translation: readVerseTranslation(),
       verse_overlay_page: 0,
       verse_overlay_take: 5,
     }).then(setPresentation);
@@ -783,7 +836,6 @@ export default function Live() {
                     }).then(setPresentation);
                   }}
                   onClose={closeVerse}
-                  darkText={darkText}
                 />
               ) : null}
             </div>
@@ -1005,6 +1057,33 @@ export default function Live() {
             <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
               {presentation?.verse_overlay_ref ? "Verse display" : "Lyrics text"}
             </h4>
+            {presentation?.verse_overlay_ref ? (
+              <div className="grid grid-cols-3 gap-1.5">
+                {FREE_BIBLE_TRANSLATIONS.map((item) => {
+                  const activeLang =
+                    (presentation.verse_overlay_translation || "ceb") === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      type="button"
+                      disabled={!live}
+                      onClick={() => setVerseTranslation(item.value)}
+                      className={`rounded-lg px-2 py-2 text-[11px] font-semibold leading-tight transition-colors disabled:opacity-40 ${
+                        activeLang
+                          ? "bg-primary text-on-primary"
+                          : "bg-surface-container-low border border-white/10 text-on-surface-variant hover:bg-white/5"
+                      }`}
+                    >
+                      {item.value === "ceb"
+                        ? "Bisaya"
+                        : item.value === "kjv"
+                          ? "English"
+                          : "WEB"}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <select
               value={font}
               disabled={!live}
@@ -1067,7 +1146,7 @@ export default function Live() {
             />
             <p className="text-[10px] text-on-surface-variant">
               {presentation?.verse_overlay_ref
-                ? "Font and size apply to the verse overlay and update live."
+                ? "Bisaya or English updates on the projector. Verse text is black, bold, and underlined."
                 : "Title and section stay in Arial. Only the lyrics use this font and size."}
             </p>
           </div>

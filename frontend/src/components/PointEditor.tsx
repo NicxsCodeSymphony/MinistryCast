@@ -217,7 +217,7 @@ export default function PointEditor({
       />
       <p className="text-[10px] text-on-surface-variant">
         Select words, then bold, italic, underline, or a color. Shortcuts: ⌘B
-        ⌘I ⌘U. Click a gold verse to open it.
+        ⌘I ⌘U. Click an underlined verse to open it.
       </p>
     </div>
   );

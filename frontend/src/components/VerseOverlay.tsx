@@ -17,7 +17,6 @@ type VerseOverlayProps = {
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (size: number) => void;
   onClose?: () => void;
-  darkText?: boolean;
 };
 
 export default function VerseOverlay({
@@ -31,7 +30,6 @@ export default function VerseOverlay({
   onPageChange,
   onPageSizeChange,
   onClose,
-  darkText = false,
 }: VerseOverlayProps) {
   const [title, setTitle] = useState(reference);
   const [verses, setVerses] = useState<BibleVerse[]>([]);
@@ -42,10 +40,10 @@ export default function VerseOverlay({
   const code = (translation || "ceb") as FreeBibleTranslation;
   const language =
     code === "ceb"
-      ? "Bisaya KJV"
+      ? "Bisaya"
       : code === "web"
-        ? "World English"
-        : "King James";
+        ? "English (WEB)"
+        : "English (KJV)";
   const family = stageFontFamily(font);
   const maxPx = sermonSizePx(textSize);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -175,6 +173,16 @@ export default function VerseOverlay({
     onPageChange?.(Math.max(0, start - take));
   }, [hasPrev, onPageChange, start, take]);
 
+  const maxTake = Math.max(1, verses.length);
+  const adjustTake = useCallback(
+    (delta: number) => {
+      const next = Math.min(maxTake, Math.max(1, take + delta));
+      setTakeDraft(String(next));
+      if (next !== pageSize) onPageSizeChange?.(next);
+    },
+    [maxTake, onPageSizeChange, pageSize, take],
+  );
+
   useEffect(() => {
     if (!onClose || (!hasPrev && !hasNext)) return;
     const onKey = (event: KeyboardEvent) => {
@@ -200,9 +208,7 @@ export default function VerseOverlay({
 
   return (
     <div
-      className={`absolute inset-0 z-30 flex flex-col ${
-        darkText ? "bg-white" : "bg-[#05070d]"
-      }`}
+      className="absolute inset-0 z-30 flex flex-col bg-white text-black"
       style={{
         fontFamily: family,
         paddingTop: paddingTop ? `${paddingTop}px` : undefined,
@@ -212,11 +218,7 @@ export default function VerseOverlay({
         <button
           type="button"
           onClick={onClose}
-          className={`absolute top-4 right-4 z-10 w-11 h-11 rounded-full ${
-            darkText
-              ? "bg-black/10 text-black hover:bg-black/15"
-              : "bg-white/10 text-white hover:bg-white/20"
-          }`}
+          className="absolute top-4 right-4 z-10 w-11 h-11 rounded-full bg-black/10 text-black hover:bg-black/15"
           aria-label="Close verse"
         >
           <span className="material-symbols-outlined text-[22px]">close</span>
@@ -229,55 +231,39 @@ export default function VerseOverlay({
           className="h-full w-full min-w-0 overflow-hidden flex flex-col justify-center"
         >
           {busy ? (
-            <p className={`text-center text-2xl ${darkText ? "text-black/50" : "text-white/60"}`}>Loading verse…</p>
+            <p className="text-center text-2xl text-black/50">Loading verse…</p>
           ) : error ? (
-            <p className="text-[#ffb4ab] text-center text-2xl">{error}</p>
+            <p className="text-[#b42318] text-center text-2xl">{error}</p>
           ) : (
             <div
               ref={textRef}
-              className="w-full min-w-0 max-w-full break-words"
+              className="w-full min-w-0 max-w-full break-words text-black"
               style={{ fontSize: `${fontPx}px`, fontFamily: family }}
             >
               <div className="text-center mb-[0.9em]">
                 <p
-                  className={`font-semibold tracking-[0.16em] uppercase ${
-                    darkText ? "text-neutral-500" : "text-[#f0c674]"
-                  }`}
+                  className="font-bold tracking-[0.16em] uppercase text-black"
                   style={{ fontSize: "0.62em" }}
                 >
                   {language}
                 </p>
                 <h2
-                  className={`mt-[0.45em] font-semibold ${
-                    darkText
-                      ? "text-black"
-                      : "text-white drop-shadow-[0_4px_16px_rgba(0,0,0,0.65)]"
-                  }`}
+                  className="mt-[0.45em] font-bold text-black underline underline-offset-[0.18em]"
                   style={{ fontSize: "1em", lineHeight: 1.15 }}
                 >
                   {title}
                 </h2>
               </div>
-              <div
-                className={`text-left leading-[1.35] ${
-                  darkText
-                    ? "text-black"
-                    : "text-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.65)]"
-                }`}
-              >
+              <div className="text-left leading-[1.35] text-black font-bold">
                 {visible.map((row) => (
                   <p
                     key={row.verse}
                     className="mb-[0.45em] last:mb-0 break-words whitespace-normal"
                   >
-                    <span
-                      className={`font-semibold mr-[0.4em] tabular-nums ${
-                        darkText ? "text-neutral-500" : "text-[#f0c674]"
-                      }`}
-                    >
+                    <span className="font-bold mr-[0.4em] tabular-nums text-black underline underline-offset-[0.16em] decoration-2">
                       {row.verse}
                     </span>
-                    {row.text}
+                    <span>{row.text}</span>
                   </p>
                 ))}
               </div>
@@ -288,21 +274,27 @@ export default function VerseOverlay({
 
       {showNav ? (
         <div className="shrink-0 flex flex-col items-center gap-3 px-6 pb-5 pt-1">
-          <label className={`flex items-center gap-2 text-sm ${darkText ? "text-black/70" : "text-white/80"}`}>
+          <label className="flex items-center gap-2 text-sm text-black/70">
             <span>Show</span>
+            <button
+              type="button"
+              onClick={() => adjustTake(-1)}
+              disabled={take <= 1}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/10 text-black font-bold text-lg leading-none hover:bg-black/15 disabled:pointer-events-none disabled:opacity-30"
+              aria-label="Show fewer verses"
+            >
+              −
+            </button>
             <input
               type="number"
               min={1}
-              max={Math.max(1, verses.length)}
+              max={maxTake}
               value={takeDraft}
               onChange={(event) => setTakeDraft(event.target.value)}
               onBlur={() => {
                 const parsed = Number(takeDraft);
                 const next = Number.isFinite(parsed)
-                  ? Math.min(
-                      Math.max(1, Math.round(parsed)),
-                      Math.max(1, verses.length),
-                    )
+                  ? Math.min(Math.max(1, Math.round(parsed)), maxTake)
                   : take;
                 setTakeDraft(String(next));
                 if (next !== pageSize) onPageSizeChange?.(next);
@@ -311,13 +303,18 @@ export default function VerseOverlay({
                 if (event.key !== "Enter") return;
                 (event.target as HTMLInputElement).blur();
               }}
-              className={`w-16 rounded-lg px-2 py-1 text-center text-sm font-semibold tabular-nums focus:outline-none ${
-                darkText
-                  ? "bg-black/5 border border-black/15 text-black focus:border-black/40"
-                  : "bg-white/10 border border-white/15 text-white focus:border-[#f0c674]"
-              }`}
+              className="w-16 rounded-lg px-2 py-1 text-center text-sm font-semibold tabular-nums focus:outline-none bg-black/5 border border-black/15 text-black focus:border-black/40"
               aria-label="Number of verses to show"
             />
+            <button
+              type="button"
+              onClick={() => adjustTake(1)}
+              disabled={take >= maxTake}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-black/10 text-black font-bold text-lg leading-none hover:bg-black/15 disabled:pointer-events-none disabled:opacity-30"
+              aria-label="Show more verses"
+            >
+              +
+            </button>
             <span>
               of {verses.length} verse{verses.length === 1 ? "" : "s"}
             </span>
@@ -328,11 +325,7 @@ export default function VerseOverlay({
                 type="button"
                 onClick={goPrev}
                 disabled={!hasPrev}
-                className={`flex items-center gap-1 rounded-full px-4 py-2 text-sm font-semibold disabled:pointer-events-none disabled:opacity-30 ${
-                  darkText
-                    ? "bg-black/10 text-black hover:bg-black/15"
-                    : "bg-white/10 text-white hover:bg-white/20"
-                }`}
+                className="flex items-center gap-1 rounded-full px-4 py-2 text-sm font-semibold disabled:pointer-events-none disabled:opacity-30 bg-black/10 text-black hover:bg-black/15"
                 aria-label="Previous verses"
               >
                 <span className="material-symbols-outlined text-[20px]">
@@ -340,7 +333,7 @@ export default function VerseOverlay({
                 </span>
                 Previous
               </button>
-              <span className="min-w-[4.5rem] text-center text-sm font-semibold tabular-nums tracking-wide text-[#f0c674]">
+              <span className="min-w-[4.5rem] text-center text-sm font-bold tabular-nums tracking-wide text-black">
                 {visible[0]?.verse ?? ""}
                 {visible.length > 1 ? `–${visible[visible.length - 1]?.verse}` : ""}
               </span>
@@ -348,11 +341,7 @@ export default function VerseOverlay({
                 type="button"
                 onClick={goNext}
                 disabled={!hasNext}
-                className={`flex items-center gap-1 rounded-full px-4 py-2 text-sm font-semibold disabled:pointer-events-none disabled:opacity-30 ${
-                  darkText
-                    ? "bg-black/10 text-black hover:bg-black/15"
-                    : "bg-white/10 text-white hover:bg-white/20"
-                }`}
+                className="flex items-center gap-1 rounded-full px-4 py-2 text-sm font-semibold disabled:pointer-events-none disabled:opacity-30 bg-black/10 text-black hover:bg-black/15"
                 aria-label="Next verses"
               >
                 Next

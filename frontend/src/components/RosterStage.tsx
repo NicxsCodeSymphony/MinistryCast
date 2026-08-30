@@ -110,8 +110,11 @@ export default function RosterStage({
               }}
             >
               <span
-                className="shrink-0 font-medium"
-                style={{ color: GOLD, minWidth: "38%" }}
+                className={`shrink-0 ${darkText ? "font-bold text-black" : "font-medium"}`}
+                style={{
+                  color: darkText ? "#000000" : GOLD,
+                  minWidth: "38%",
+                }}
               >
                 {row.role}
               </span>
