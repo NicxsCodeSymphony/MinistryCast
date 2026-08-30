@@ -6,55 +6,93 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-fn projector_hash(path: &str) -> String {
-    let trimmed = path.trim().trim_start_matches('/');
-    let trimmed = trimmed.strip_prefix("index.html").unwrap_or(trimmed);
-    let trimmed = trimmed.trim_start_matches('#');
-    let trimmed = trimmed.trim_start_matches('/');
-    format!("#/{trimmed}")
-}
-
-fn projector_asset_url(path: &str) -> String {
-    format!("index.html{}", projector_hash(path))
-}
-
-fn place_projector(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
-    let _ = window.set_fullscreen(false);
-    let monitors = app.available_monitors().map_err(|err| err.to_string())?;
-    let primary = app.primary_monitor().ok().flatten();
-    let target = monitors
-        .iter()
-        .find(|monitor| {
-            primary
-                .as_ref()
-                .map(|item| item.position() != monitor.position())
-                .unwrap_or(true)
+fn presentation_id(path: &str) -> String {
+    path.split("presentation=")
+        .nth(1)
+        .map(|value| {
+            value
+                .split(['&', '#', '/'])
+                .next()
+                .unwrap_or(value)
+                .trim()
+                .to_string()
         })
-        .or_else(|| monitors.first());
+        .unwrap_or_default()
+}
+
+fn projector_init_script(id: &str) -> String {
+    let json = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into());
+    format!(
+        r#"
+        (function () {{
+          try {{
+            window.__MC_IS_PROJECTOR__ = true;
+            window.__MC_OUTPUT__ = {json};
+            sessionStorage.setItem("mc.outputPresentation", {json});
+          }} catch (e) {{}}
+        }})();
+        "#
+    )
+}
+
+fn focus_operator(app: &tauri::AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.unminimize();
+        let _ = main.set_focus();
+    }
+}
+
+fn place_projector(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.show();
+
+    let Ok(monitors) = app.available_monitors() else {
+        focus_operator(app);
+        return;
+    };
+    let operator_monitor = app
+        .get_webview_window("main")
+        .and_then(|main| main.current_monitor().ok().flatten());
+    let target = monitors.iter().find(|monitor| {
+        operator_monitor
+            .as_ref()
+            .map(|item| item.position() != monitor.position())
+            .unwrap_or(true)
+    });
 
     if let Some(monitor) = target {
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_decorations(false);
+        let _ = window.set_fullscreen(false);
         let _ = window.set_position(tauri::Position::Physical(*monitor.position()));
-        #[cfg(windows)]
-        {
-            let _ = window.set_size(tauri::Size::Physical(*monitor.size()));
-            let _ = window.set_fullscreen(true);
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = window.set_size(tauri::Size::Physical(*monitor.size()));
+        let _ = window.set_size(tauri::Size::Physical(*monitor.size()));
+    } else {
+        // One display: keep a windowed output so the operator console stays usable.
+        let _ = window.set_always_on_top(false);
+        let _ = window.set_fullscreen(false);
+        let _ = window.set_decorations(true);
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(960.0, 540.0)));
+        if let Some(main) = app.get_webview_window("main") {
+            if let Ok(pos) = main.outer_position() {
+                let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                    x: pos.x + 72,
+                    y: pos.y + 72,
+                }));
+            }
         }
     }
+
     let _ = window.show();
-    Ok(())
+    focus_operator(app);
 }
 
 fn schedule_place_projector(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(350));
+        std::thread::sleep(Duration::from_millis(250));
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             if let Some(window) = handle.get_webview_window("projector") {
-                let _ = place_projector(&handle, &window);
+                place_projector(&handle, &window);
             }
         });
     });
@@ -62,40 +100,41 @@ fn schedule_place_projector(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn open_projector(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let hash = projector_hash(&path);
+    let id = presentation_id(&path);
     if let Some(existing) = app.get_webview_window("projector") {
-        let _ = existing.eval(&format!("location.hash = {hash:?}"));
-        place_projector(&app, &existing)?;
-        #[cfg(windows)]
-        schedule_place_projector(app.clone());
-        let _ = existing.set_focus();
+        if !id.is_empty() {
+            let script = format!(
+                r##"
+                try {{
+                  window.__MC_IS_PROJECTOR__ = true;
+                  sessionStorage.setItem("mc.outputPresentation", {id});
+                  window.__MC_OUTPUT__ = {id};
+                  location.hash = "#/output?presentation=" + encodeURIComponent({id});
+                }} catch (e) {{}}
+                "##,
+                id = serde_json::to_string(&id).unwrap_or_else(|_| "\"\"".into())
+            );
+            let _ = existing.eval(&script);
+        }
+        place_projector(&app, &existing);
+        schedule_place_projector(app);
         return Ok(());
     }
 
-    let url = projector_asset_url(&path);
-    let mut builder = WebviewWindowBuilder::new(&app, "projector", WebviewUrl::App(url.into()))
+    let window = WebviewWindowBuilder::new(&app, "projector", WebviewUrl::App("index.html".into()))
         .title("MinistryCast Output")
-        .decorations(false)
+        .decorations(true)
+        .resizable(true)
         .fullscreen(false)
         .always_on_top(false)
+        .visible(true)
         .focused(false)
-        .visible(false)
-        .initialization_script(&format!(
-            "if (!location.hash || location.hash.indexOf('#/output') !== 0) location.hash = {hash:?};"
-        ));
+        .inner_size(960.0, 540.0)
+        .initialization_script(&projector_init_script(&id))
+        .build()
+        .map_err(|err| err.to_string())?;
 
-    #[cfg(windows)]
-    {
-        builder = builder.resizable(true);
-    }
-    #[cfg(not(windows))]
-    {
-        builder = builder.resizable(false);
-    }
-
-    let window = builder.build().map_err(|err| err.to_string())?;
-    place_projector(&app, &window)?;
-    #[cfg(windows)]
+    place_projector(&app, &window);
     schedule_place_projector(app);
     Ok(())
 }
@@ -105,6 +144,7 @@ fn close_projector(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("projector") {
         window.close().map_err(|err| err.to_string())?;
     }
+    focus_operator(&app);
     Ok(())
 }
 

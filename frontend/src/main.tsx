@@ -47,6 +47,24 @@ function Root() {
 const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+const isProjectorWindow = Boolean(
+  (window as Window & { __MC_IS_PROJECTOR__?: boolean }).__MC_IS_PROJECTOR__,
+);
+let projectorId = "";
+if (isProjectorWindow) {
+  try {
+    projectorId =
+      (window as Window & { __MC_OUTPUT__?: string }).__MC_OUTPUT__ ||
+      sessionStorage.getItem("mc.outputPresentation") ||
+      "";
+  } catch {
+    projectorId = (window as Window & { __MC_OUTPUT__?: string }).__MC_OUTPUT__ || "";
+  }
+}
+if (isTauri && isProjectorWindow && projectorId && !window.location.hash.includes("/output")) {
+  window.location.hash = `#/output?presentation=${encodeURIComponent(projectorId)}`;
+}
+
 const routes = [
   {
     element: <Root />,

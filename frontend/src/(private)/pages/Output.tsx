@@ -28,7 +28,14 @@ import type { LiveCue, Presentation, Setlist } from "../../lib/types";
 
 export default function Output() {
   const [params] = useSearchParams();
-  const requestedId = params.get("presentation");
+  const requestedId =
+    params.get("presentation") ||
+    (typeof window !== "undefined"
+      ? (window as Window & { __MC_OUTPUT__?: string }).__MC_OUTPUT__
+      : undefined) ||
+    (typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem("mc.outputPresentation")
+      : null);
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [setlist, setSetlist] = useState<Setlist | null>(null);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
