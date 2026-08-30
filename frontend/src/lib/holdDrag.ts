@@ -83,8 +83,11 @@ export function useHoldReorder(
             boxShadow: "0 18px 40px rgba(0,0,0,0.55)",
             transition: "none",
             cursor: "grabbing",
+            touchAction: "none",
           }
-        : undefined;
+        : {
+            touchAction: "none",
+          };
       return {
         "data-hold-list": listId,
         "data-hold-id": id,
@@ -94,7 +97,11 @@ export function useHoldReorder(
         onPointerDown: (event: ReactPointerEvent<HTMLElement>) => {
           if (!enabled || event.button !== 0 || isIgnored(event.target)) return;
           session.current = { id, startY: event.clientY, dragging: false };
-          event.currentTarget.setPointerCapture(event.pointerId);
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId);
+          } catch (err) {
+            console.error("Pointer capture failed", err);
+          }
         },
         onPointerMove: (event: ReactPointerEvent<HTMLElement>) => {
           const current = session.current;

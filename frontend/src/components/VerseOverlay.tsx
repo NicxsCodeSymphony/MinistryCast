@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { lookupScripture } from "../lib/api";
-import { type BibleVerse, type FreeBibleTranslation } from "../lib/bible";
+import {
+  type BibleVerse,
+  type FreeBibleTranslation,
+} from "../lib/bible";
 import { sermonSizePx } from "../lib/helpers";
 import { DEFAULT_STAGE_FONT, stageFontFamily } from "../lib/stageFonts";
+import type { LyricTextStyle } from "../lib/lyricTextStyle";
 
 const VERSE_PAGE_SIZE = 5;
 
@@ -11,11 +15,14 @@ type VerseOverlayProps = {
   translation?: string | null;
   font?: string | null;
   textSize?: string | null;
+  textStyle?: string | null;
+  color?: string | null;
   paddingTop?: number;
   page?: number;
   pageSize?: number;
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (size: number) => void;
+  onReferenceChange?: (reference: string) => void;
   onClose?: () => void;
 };
 
@@ -24,30 +31,57 @@ export default function VerseOverlay({
   translation = "ceb",
   font = DEFAULT_STAGE_FONT,
   textSize = "md",
+  textStyle,
+  color,
   paddingTop = 0,
   page = 0,
   pageSize = VERSE_PAGE_SIZE,
   onPageChange,
   onPageSizeChange,
+  onReferenceChange,
   onClose,
 }: VerseOverlayProps) {
   const [title, setTitle] = useState(reference);
   const [verses, setVerses] = useState<BibleVerse[]>([]);
+  const [allVerses, setAllVerses] = useState<BibleVerse[]>([]);
+  const [bookName, setBookName] = useState("");
+  const [chapterNum, setChapterNum] = useState(1);
+  const [internalStyles, setInternalStyles] = useState<{
+    textSize?: string | null;
+    font?: string | null;
+    textStyle?: string | null;
+    color?: string | null;
+  }>({});
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
-  const [fontPx, setFontPx] = useState(sermonSizePx(textSize));
+  const effectiveTextSize = textSize || internalStyles.textSize || "md";
+  const effectiveFont = font || internalStyles.font || DEFAULT_STAGE_FONT;
+  const effectiveTextStyle = textStyle || internalStyles.textStyle;
+  const effectiveColor = color || internalStyles.color;
+
+  const [fontPx, setFontPx] = useState(sermonSizePx(effectiveTextSize));
   const [takeDraft, setTakeDraft] = useState(String(pageSize));
   const code = (translation || "ceb") as FreeBibleTranslation;
   const language =
     code === "ceb"
-      ? "Bisaya"
-      : code === "web"
-        ? "English (WEB)"
+      ? "Visayan"
+      : code === "niv"
+        ? "English (NIV)"
         : "English (KJV)";
-  const family = stageFontFamily(font);
-  const maxPx = sermonSizePx(textSize);
+  const family = stageFontFamily(effectiveFont);
+  const maxPx = sermonSizePx(effectiveTextSize);
   const boxRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+
+  const styleObj: LyricTextStyle = useMemo(() => {
+    try {
+      return effectiveTextStyle
+        ? JSON.parse(effectiveTextStyle)
+        : { bold: true, italic: false, underline: false };
+    } catch {
+      return { bold: true, italic: false, underline: false };
+    }
+  }, [effectiveTextStyle]);
 
   const start = verses.length
     ? Math.min(Math.max(0, page), verses.length - 1)
@@ -89,11 +123,23 @@ export default function VerseOverlay({
         if (cancelled) return;
         setTitle(result.reference);
         setVerses(result.selectedVerses);
+        setAllVerses(result.verses);
+        setBookName(result.book);
+        setChapterNum(result.chapter);
+        if (result.passage) {
+          setInternalStyles({
+            textSize: result.passage.text_size,
+            font: result.passage.font,
+            textStyle: result.passage.text_style,
+            color: result.passage.color,
+          });
+        }
       })
       .catch((err) => {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Could not load that verse.");
         setVerses([]);
+        setAllVerses([]);
       })
       .finally(() => {
         if (!cancelled) setBusy(false);
@@ -161,19 +207,61 @@ export default function VerseOverlay({
       observer.disconnect();
       document.fonts.removeEventListener("loadingdone", fit);
     };
-  }, [busy, error, maxPx, verseKey, visible.length]);
+  }, [busy, error, family, maxPx, verseKey, visible.length]);
+
+  const updateSelection = useCallback(
+    (newVerses: number[]) => {
+      if (!onReferenceChange) return;
+      import("../lib/bible").then(({ formatBibleReference }) => {
+        const next = formatBibleReference(bookName, chapterNum, newVerses);
+        onReferenceChange(next);
+      });
+    },
+    [bookName, chapterNum, onReferenceChange],
+  );
+
+  const addVerseEnd = () => {
+    const last = verses[verses.length - 1]?.verse;
+    if (!last) return;
+    const next = allVerses.find((v) => v.verse === last + 1);
+    if (!next) return;
+    const current = verses.map((v) => v.verse);
+    updateSelection([...current, next.verse]);
+  };
+
+  const removeVerseEnd = () => {
+    if (verses.length <= 1) return;
+    const current = verses.map((v) => v.verse);
+    updateSelection(current.slice(0, -1));
+  };
+
+  const addVerseStart = () => {
+    const first = verses[0]?.verse;
+    if (!first) return;
+    const prev = allVerses.find((v) => v.verse === first - 1);
+    if (!prev) return;
+    const current = verses.map((v) => v.verse);
+    updateSelection([prev.verse, ...current]);
+  };
+
+  const removeVerseStart = () => {
+    if (verses.length <= 1) return;
+    const current = verses.map((v) => v.verse);
+    updateSelection(current.slice(1));
+  };
 
   const goNext = useCallback(() => {
-    if (!hasNext) return;
-    onPageChange?.(start + visible.length);
-  }, [hasNext, onPageChange, start, visible.length]);
+    const next = start + take;
+    if (next < verses.length) onPageChange?.(next);
+  }, [onPageChange, start, take, verses.length]);
 
   const goPrev = useCallback(() => {
-    if (!hasPrev) return;
-    onPageChange?.(Math.max(0, start - take));
-  }, [hasPrev, onPageChange, start, take]);
+    const next = Math.max(0, start - take);
+    if (next !== start) onPageChange?.(next);
+  }, [onPageChange, start, take]);
 
-  const maxTake = Math.max(1, verses.length);
+  const maxTake = verses.length;
+
   const adjustTake = useCallback(
     (delta: number) => {
       const next = Math.min(maxTake, Math.max(1, take + delta));
@@ -206,12 +294,15 @@ export default function VerseOverlay({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [goNext, goPrev, hasNext, hasPrev, onClose]);
 
+  const foreground = effectiveColor || "black";
+
   return (
     <div
-      className="absolute inset-0 z-30 flex flex-col bg-white text-black"
+      className="absolute inset-0 z-30 flex flex-col bg-white"
       style={{
         fontFamily: family,
         paddingTop: paddingTop ? `${paddingTop}px` : undefined,
+        color: foreground,
       }}
     >
       {onClose ? (
@@ -231,36 +322,97 @@ export default function VerseOverlay({
           className="h-full w-full min-w-0 overflow-hidden flex flex-col justify-center"
         >
           {busy ? (
-            <p className="text-center text-2xl text-black/50">Loading verse…</p>
+            <p className="text-center text-2xl opacity-50">Loading verse…</p>
           ) : error ? (
             <p className="text-[#b42318] text-center text-2xl">{error}</p>
           ) : (
             <div
               ref={textRef}
-              className="w-full min-w-0 max-w-full break-words text-black"
-              style={{ fontSize: `${fontPx}px`, fontFamily: family }}
+              className="w-full min-w-0 max-w-full break-words"
+              style={{
+                fontSize: `${fontPx}px`,
+                fontFamily: family,
+                fontWeight: styleObj.bold ? "bold" : "normal",
+                fontStyle: styleObj.italic ? "italic" : "normal",
+                textDecoration: styleObj.underline ? "underline" : "none",
+              }}
             >
               <div className="text-center mb-[0.9em]">
                 <p
-                  className="font-bold tracking-[0.16em] uppercase text-black"
+                  className="font-bold tracking-[0.16em] uppercase"
                   style={{ fontSize: "0.62em" }}
                 >
                   {language}
                 </p>
-                <h2
-                  className="mt-[0.45em] font-bold text-black underline underline-offset-[0.18em]"
-                  style={{ fontSize: "1em", lineHeight: 1.15 }}
-                >
-                  {title}
-                </h2>
+                <div className="flex items-center justify-center gap-4 mt-[0.45em]">
+                  {onReferenceChange && !busy && verses.length > 0 && (
+                    <div className="flex flex-col gap-1 translate-y-[-2px]">
+                      <button
+                        type="button"
+                        onClick={removeVerseStart}
+                        disabled={verses.length <= 1}
+                        className="w-6 h-6 flex items-center justify-center rounded bg-black/5 hover:bg-black/10 disabled:opacity-30 disabled:hover:bg-black/5"
+                        style={{ color: "black" }}
+                        title="Contract range from start"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">add</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={addVerseStart}
+                        disabled={verses[0]?.verse === allVerses[0]?.verse}
+                        className="w-6 h-6 flex items-center justify-center rounded bg-black/5 hover:bg-black/10 disabled:opacity-30 disabled:hover:bg-black/5"
+                        style={{ color: "black" }}
+                        title="Expand range backwards"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">remove</span>
+                      </button>
+                    </div>
+                  )}
+
+                  <h2
+                    className="font-bold underline underline-offset-[0.18em]"
+                    style={{ fontSize: "1em", lineHeight: 1.15 }}
+                  >
+                    {title}
+                  </h2>
+
+                  {onReferenceChange && !busy && verses.length > 0 && (
+                    <div className="flex flex-col gap-1 translate-y-[-2px]">
+                      <button
+                        type="button"
+                        onClick={addVerseEnd}
+                        disabled={verses[verses.length - 1]?.verse === allVerses[allVerses.length - 1]?.verse}
+                        className="w-6 h-6 flex items-center justify-center rounded bg-black/5 hover:bg-black/10 disabled:opacity-30 disabled:hover:bg-black/5"
+                        style={{ color: "black" }}
+                        title="Add next verse"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">add</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={removeVerseEnd}
+                        disabled={verses.length <= 1}
+                        className="w-6 h-6 flex items-center justify-center rounded bg-black/5 hover:bg-black/10 disabled:opacity-30 disabled:hover:bg-black/5"
+                        style={{ color: "black" }}
+                        title="Remove last verse"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">remove</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="text-left leading-[1.35] text-black font-bold">
+              <div
+                className="text-left leading-[1.35] font-bold"
+                style={{ color: foreground }}
+              >
                 {visible.map((row) => (
                   <p
                     key={row.verse}
                     className="mb-[0.45em] last:mb-0 break-words whitespace-normal"
                   >
-                    <span className="font-bold mr-[0.4em] tabular-nums text-black underline underline-offset-[0.16em] decoration-2">
+                    <span className="font-bold mr-[0.4em] tabular-nums underline underline-offset-[0.16em] decoration-2">
                       {row.verse}
                     </span>
                     <span>{row.text}</span>

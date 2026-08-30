@@ -45,3 +45,18 @@ export async function idbDel(key: string) {
     tx.onerror = () => reject(tx.error);
   });
 }
+
+export async function idbListKeys(): Promise<string[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readonly");
+    const request = tx.objectStore(STORE).getAllKeys();
+    request.onsuccess = () => resolve((request.result as IDBValidKey[]).map(String));
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function idbDelByPrefix(prefix: string) {
+  const keys = await idbListKeys();
+  await Promise.all(keys.filter((key) => key.startsWith(prefix)).map(idbDel));
+}

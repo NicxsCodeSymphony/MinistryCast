@@ -32,6 +32,10 @@ import RequireActive from "./(private)/RequireActive";
 import { PrefsProvider } from "./lib/PrefsContext";
 import { ToastProvider } from "./lib/ToastContext";
 import ForceUpdate from "./components/ForceUpdate";
+import { ensureBibleCacheFresh } from "./lib/bible";
+import { invalidateQueries } from "./lib/offline/queryCache";
+
+void ensureBibleCacheFresh().then(() => invalidateQueries());
 
 function Root() {
   return (

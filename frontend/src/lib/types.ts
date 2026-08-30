@@ -149,6 +149,10 @@ export type ScripturePassage = {
   bible_version_id: string | null;
   reference: string;
   text: string | null;
+  text_size?: string | null;
+  font?: string | null;
+  text_style?: string | null;
+  color?: string | null;
 };
 
 export type BibleVersion = {
@@ -244,6 +248,8 @@ export type Presentation = {
   verse_overlay_translation: string | null;
   verse_overlay_page: number;
   verse_overlay_take: number;
+  verse_overlay_text_style?: string | null;
+  verse_overlay_color?: string | null;
   created_at: string;
   updated_at: string;
 };

@@ -15,6 +15,10 @@ import {
   type FreeBibleTranslation,
 } from "../../lib/bible";
 import { newServiceItem, type ServiceItem } from "./serviceItem";
+import TextSizePicker from "../TextSizePicker";
+import TextStylePicker from "../TextStylePicker";
+import { DEFAULT_STAGE_FONT, STAGE_FONTS, stageFontFamily } from "../../lib/stageFonts";
+import type { LyricTextStyle } from "../../lib/lyricTextStyle";
 
 type ScriptureSelectPanelProps = {
   setlistName: string;
@@ -36,6 +40,14 @@ export default function ScriptureSelectPanel({
   const [selectedVerses, setSelectedVerses] = useState<number[]>([2, 3, 4]);
   const [previewMode, setPreviewMode] = useState<"screen" | "stage">("screen");
   const [autoPaginate, setAutoPaginate] = useState(true);
+  const [textSize, setTextSize] = useState("md");
+  const [font, setFont] = useState(DEFAULT_STAGE_FONT);
+  const [textStyle, setTextStyle] = useState<LyricTextStyle>({
+    bold: true,
+    italic: false,
+    underline: false,
+  });
+  const [color, setColor] = useState("#FFFFFF");
   const [saving, setSaving] = useState(false);
   const [chapterData, setChapterData] = useState<BibleChapter | null>(null);
   const [chapterBusy, setChapterBusy] = useState(false);
@@ -115,6 +127,10 @@ export default function ScriptureSelectPanel({
         reference,
         text,
         bibleVersionId,
+        text_size: textSize,
+        font,
+        text_style: JSON.stringify(textStyle),
+        color,
       });
       onAdd(
         newServiceItem({
@@ -242,8 +258,9 @@ export default function ScriptureSelectPanel({
                 <p className="text-sm text-[#ffb4ab]">{chapterError}</p>
               ) : (
                 <p className="text-xs text-on-surface-variant">
-                  Public-domain text from bible-api.com. Chapters are cached on this
-                  device and queued to backup online.
+                  Scripture text (NIV, KJV, and Visayan Maayong Balita) from
+                  open-source XML repositories. Chapters are cached on this device
+                  and saved to your church library.
                 </p>
               )}
             </div>
@@ -431,12 +448,41 @@ export default function ScriptureSelectPanel({
                   videocam
                 </span>
               </div>
-              <div className="relative z-10 w-full p-8 bg-gradient-to-t from-black/90 via-black/60 to-transparent">
-                <div className="border-l-4 border-primary pl-6 py-2 backdrop-blur-sm">
-                  <h3 className="text-xl sm:text-2xl font-bold text-white mb-2 max-w-2xl leading-snug drop-shadow-lg">
+              <div
+                className="relative z-10 w-full p-8 bg-gradient-to-t from-black/90 via-black/60 to-transparent"
+                style={{
+                  fontFamily: stageFontFamily(font),
+                  color: color,
+                }}
+              >
+                <div
+                  className="border-l-4 border-primary pl-6 py-2 backdrop-blur-sm"
+                  style={{
+                    borderColor: color === "#FFFFFF" ? undefined : color,
+                  }}
+                >
+                  <h3
+                    className={`font-bold mb-2 max-w-2xl leading-snug drop-shadow-lg ${
+                      textStyle.italic ? "italic" : ""
+                    } ${textStyle.underline ? "underline" : ""}`}
+                    style={{
+                      fontSize:
+                        textSize === "sm"
+                          ? "1rem"
+                          : textSize === "lg"
+                            ? "1.75rem"
+                            : textSize === "xl"
+                              ? "2.25rem"
+                              : "1.35rem",
+                      fontWeight: textStyle.bold ? "bold" : "normal",
+                    }}
+                  >
                     {selectedVerses.slice(0, 2).map((n) => (
                       <span key={n}>
-                        <sup className="text-primary/70 font-normal text-sm mr-1">
+                        <sup
+                          className="font-normal text-sm mr-1"
+                          style={{ opacity: 0.7 }}
+                        >
                           {n}
                         </sup>
                         {verseText(n)}{" "}
@@ -444,28 +490,42 @@ export default function ScriptureSelectPanel({
                     ))}
                     {!selectedVerses.length ? previewText : null}
                   </h3>
-                  <p className="text-primary/90 font-medium tracking-wide uppercase text-sm mt-4 drop-shadow-md">
+                  <p
+                    className="font-medium tracking-wide uppercase text-sm mt-4 drop-shadow-md"
+                    style={{ opacity: 0.9 }}
+                  >
                     {reference} ({translationLabel})
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="glass-panel rounded-xl p-4 flex justify-between items-center shrink-0">
+            <div className="glass-panel rounded-xl p-4 flex flex-wrap gap-4 justify-between items-center shrink-0">
               <div className="flex items-center gap-4 text-on-surface-variant">
-                {["format_size", "vertical_align_bottom", "palette"].map(
-                  (icon) => (
-                    <button
-                      key={icon}
-                      type="button"
-                      className="hover:text-primary transition-colors group"
-                    >
-                      <span className="material-symbols-outlined text-lg group-hover:bg-primary/20 p-1.5 rounded-md transition-colors">
-                        {icon}
-                      </span>
-                    </button>
-                  ),
-                )}
+                <select
+                  value={font}
+                  onChange={(e) => setFont(e.target.value)}
+                  className="bg-white/5 border border-white/10 rounded-md px-2 py-1 text-xs text-on-surface focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  {STAGE_FONTS.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+
+                <TextSizePicker value={textSize} onChange={setTextSize} />
+                <TextStylePicker value={textStyle} onChange={setTextStyle} />
+
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-lg">palette</span>
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={(e) => setColor(e.target.value)}
+                    className="w-6 h-6 rounded bg-transparent border-none cursor-pointer"
+                  />
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-[12px] font-medium text-on-surface-variant">

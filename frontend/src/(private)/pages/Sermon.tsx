@@ -16,6 +16,7 @@ import {
   listSermons,
   lookupScripture,
   readSetlistViewChurchId,
+  reorderSermonSlides,
   updateSermon,
   writeSetlistViewChurchId,
   type ChurchName,
@@ -170,11 +171,16 @@ export default function Sermon() {
   const { bind: bindSlide, draggingId } = useHoldReorder(
     "sermon-slides",
     (fromId, toId) => {
-      setSlides((prev) => {
-        const from = prev.findIndex((row) => row.id === fromId);
-        const to = prev.findIndex((row) => row.id === toId);
-        return moveItem(prev, from, to);
-      });
+      const from = slides.findIndex((row) => row.id === fromId);
+      const to = slides.findIndex((row) => row.id === toId);
+      if (from === -1 || to === -1) return;
+      const next = moveItem(slides, from, to);
+      setSlides(next);
+      if (sermonId && !next.some((s) => s.id.startsWith("new-"))) {
+        void reorderSermonSlides(sermonId, next.map((s) => s.id)).catch((err: unknown) =>
+          toast.error(err instanceof Error ? err.message : "Could not reorder slides."),
+        );
+      }
     },
   );
 
@@ -854,7 +860,7 @@ export default function Sermon() {
                     <div
                       key={slide.id}
                       {...hold}
-                      className={`relative group bg-surface-container/20 rounded-lg p-4 sm:p-6 border border-outline-variant/10 hover:border-primary/30 transition-all ml-3 select-none ${
+                      className={`relative group bg-surface-container/20 rounded-lg p-4 sm:p-6 border border-outline-variant/10 hover:border-primary/30 transition-all ml-3 select-none touch-none ${
                         dragging ? "cursor-grabbing" : "cursor-grab"
                       }`}
                     >

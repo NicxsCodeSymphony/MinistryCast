@@ -4,6 +4,7 @@ import {
   isFreeBibleTranslation,
   joinChapterText,
   joinVerseText,
+  normalizeBibleTranslation,
   parseBibleReference,
   versesForRange,
   type FreeBibleTranslation,
@@ -54,13 +55,14 @@ import { supabase } from "./supabase";
 import { publishPresentation, subscribeLocalPresentation } from "./offline/live";
 import { newId, nowIso } from "./offline/status";
 import { setBackupFrequency } from "./offline/sync";
-import { cachedQuery } from "./offline/queryCache";
+import { cachedQuery, invalidateQueries } from "./offline/queryCache";
 import {
   getRow,
   listRows,
   putRow,
   removeRow,
   replaceChildren,
+  withContentBatch,
   type LocalRow,
 } from "./offline/store";
 
@@ -592,7 +594,7 @@ export async function listSermons(
   );
 }
 
-export async function getSermon(id: string) {
+export async function getSermon(id: string, options?: { fresh?: boolean }) {
   const churchId = await ready();
   return cachedQuery(`getSermon:${churchId}:${id}`, async () => {
   const sermon = await getRow<Sermon>(churchId, "sermons", id);
@@ -607,7 +609,7 @@ export async function getSermon(id: string) {
       sermon.church_id,
     ),
   };
-  });
+  }, options);
 }
 
 async function replaceSermonChildren(
@@ -844,17 +846,21 @@ export async function reorderSermonSlides(sermonId: string, orderedIds: string[]
     (row) => row.sermon_id === sermonId,
   );
   const now = stamp();
-  await Promise.all(
-    orderedIds.map((id, index) => {
-      const row = slides.find((slide) => slide.id === id);
-      if (!row || row.sort_order === index) return Promise.resolve();
-      return putRow(churchId, "sermon_slides", {
-        ...row,
-        sort_order: index,
-        updated_at: now,
-      } as LocalRow);
-    }),
-  );
+  await withContentBatch(async () => {
+    // Sequential updates to avoid race condition in IndexedDB collection writes
+    for (let index = 0; index < orderedIds.length; index++) {
+      const id = orderedIds[index];
+      const slide = slides.find((s) => s.id === id);
+      if (slide && slide.sort_order !== index) {
+        await putRow(churchId, "sermon_slides", {
+          ...slide,
+          sort_order: index,
+          updated_at: now,
+        } as LocalRow);
+      }
+    }
+  });
+  return getSermon(sermonId, { fresh: true });
 }
 
 export async function listBibleVersions(): Promise<BibleVersion[]> {
@@ -876,6 +882,10 @@ export async function createScripturePassage(input: {
   reference: string;
   text?: string;
   bibleVersionId?: string | null;
+  text_size?: string | null;
+  font?: string | null;
+  text_style?: string | null;
+  color?: string | null;
 }) {
   const churchId = await ready();
   const now = stamp();
@@ -885,6 +895,10 @@ export async function createScripturePassage(input: {
     bible_version_id: input.bibleVersionId || null,
     reference: input.reference.trim(),
     text: input.text?.trim() || null,
+    text_size: input.text_size || "md",
+    font: input.font || null,
+    text_style: input.text_style || null,
+    color: input.color || null,
   };
   await putRow(churchId, "scripture_passages", {
     ...row,
@@ -909,6 +923,10 @@ export async function findOrCreateScripturePassage(input: {
   reference: string;
   text?: string;
   bibleVersionId?: string | null;
+  text_size?: string | null;
+  font?: string | null;
+  text_style?: string | null;
+  color?: string | null;
 }) {
   const churchId = await ready();
   const reference = input.reference.trim();
@@ -923,10 +941,28 @@ export async function findOrCreateScripturePassage(input: {
       reference,
       text: text ?? undefined,
       bibleVersionId,
+      text_size: input.text_size,
+      font: input.font,
+      text_style: input.text_style,
+      color: input.color,
     });
   }
-  if (text && existing.text !== text) {
-    const next = { ...existing, text };
+  const hasChanged =
+    (text && existing.text !== text) ||
+    (input.text_size && existing.text_size !== input.text_size) ||
+    (input.font && existing.font !== input.font) ||
+    (input.text_style && existing.text_style !== input.text_style) ||
+    (input.color && existing.color !== input.color);
+
+  if (hasChanged) {
+    const next: ScripturePassage = {
+      ...existing,
+      text: text ?? existing.text,
+      text_size: input.text_size ?? existing.text_size,
+      font: input.font ?? existing.font,
+      text_style: input.text_style ?? existing.text_style,
+      color: input.color ?? existing.color,
+    };
     await putRow(churchId, "scripture_passages", {
       ...next,
       updated_at: stamp(),
@@ -941,7 +977,9 @@ async function persistFetchedPassage(
   text: string,
   translation: FreeBibleTranslation,
 ) {
-  const bibleVersionId = await bibleVersionIdForCode(translation);
+  const versionCode =
+    translation === "niv" ? "WEB" : translation === "kjv" ? "KJV" : "CEB";
+  const bibleVersionId = await bibleVersionIdForCode(versionCode);
   return findOrCreateScripturePassage({
     reference,
     text,
@@ -949,22 +987,43 @@ async function persistFetchedPassage(
   });
 }
 
+async function persistChapterVerses(
+  book: string,
+  chapter: number,
+  verses: { verse: number; text: string }[],
+  translation: FreeBibleTranslation,
+) {
+  if (!verses.length) return;
+  const chapterRef = formatBibleReference(book, chapter, []);
+  await persistFetchedPassage(
+    chapterRef,
+    joinChapterText(verses),
+    translation,
+  );
+  await Promise.all(
+    verses.map((row) =>
+      persistFetchedPassage(
+        formatBibleReference(book, chapter, [row.verse]),
+        row.text,
+        translation,
+      ),
+    ),
+  );
+}
+
 export async function loadBibleChapter(
   book: string,
   chapter: number,
   translation: string,
   signal?: AbortSignal,
+  options?: { skipCache?: boolean },
 ) {
   const code: FreeBibleTranslation = isFreeBibleTranslation(translation)
     ? translation
-    : "kjv";
-  const data = await fetchBibleChapter(book, chapter, code, signal);
+    : normalizeBibleTranslation(translation);
+  const data = await fetchBibleChapter(book, chapter, code, signal, options);
   try {
-    await persistFetchedPassage(
-      formatBibleReference(data.book, data.chapter, []),
-      joinChapterText(data.verses),
-      code,
-    );
+    await persistChapterVerses(data.book, data.chapter, data.verses, code);
   } catch {
     // Chapter text stays in IndexedDB even if the church cache is not ready.
   }
@@ -982,7 +1041,7 @@ export async function lookupScripture(
   }
   const code: FreeBibleTranslation = isFreeBibleTranslation(translation)
     ? translation
-    : "kjv";
+    : normalizeBibleTranslation(translation);
   const chapter = await loadBibleChapter(
     parsed.book,
     parsed.chapter,
@@ -1254,13 +1313,13 @@ export async function updateSetlistItem(
     payload: patch.payload !== undefined ? patch.payload : existing.payload,
     updated_at: stamp(),
   } as LocalRow);
-  return getSetlist(setlistId);
+  return getSetlist(setlistId, { fresh: true });
 }
 
 export async function deleteSetlistItem(setlistId: string, itemId: string) {
   const churchId = await ready();
   await removeRow(churchId, "setlist_items", itemId);
-  return getSetlist(setlistId);
+  return getSetlist(setlistId, { fresh: true });
 }
 
 export async function reorderSetlistItems(
@@ -1272,18 +1331,21 @@ export async function reorderSetlistItems(
     (row) => row.setlist_id === setlistId,
   );
   const now = stamp();
-  await Promise.all(
-    orderedIds.map((id, index) => {
-      const row = items.find((item) => item.id === id);
-      if (!row || row.sort_order === index) return Promise.resolve();
-      return putRow(churchId, "setlist_items", {
-        ...row,
-        sort_order: index,
-        updated_at: now,
-      } as LocalRow);
-    }),
-  );
-  return getSetlist(setlistId);
+  await withContentBatch(async () => {
+    // Sequential updates to avoid race condition in IndexedDB collection writes
+    for (let index = 0; index < orderedIds.length; index++) {
+      const id = orderedIds[index];
+      const item = items.find((item) => item.id === id);
+      if (item && item.sort_order !== index) {
+        await putRow(churchId, "setlist_items", {
+          ...item,
+          sort_order: index,
+          updated_at: now,
+        } as LocalRow);
+      }
+    }
+  });
+  return getSetlist(setlistId, { fresh: true });
 }
 
 export async function getChurchSettings(options?: { fresh?: boolean }) {
@@ -1490,6 +1552,8 @@ export async function updatePresentation(
     verse_overlay_translation: string | null;
     verse_overlay_page: number;
     verse_overlay_take: number;
+    verse_overlay_text_style: string | null;
+    verse_overlay_color: string | null;
   }>,
 ) {
   const churchId = await ready();

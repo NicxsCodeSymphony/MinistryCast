@@ -91,6 +91,13 @@ export default function Live() {
   const [transitionStyle, setTransitionStyle] = useState<StageTransition>("dissolve");
   const [rosterDraft, setRosterDraft] = useState<RosterPayload | null>(null);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [editMode, setEditMode] = useState(false);
+  const [pendingPresentation, setPendingPresentation] = useState<Partial<Presentation>>({});
+  const [pendingSettings, setPendingSettings] = useState<any>({});
+  const [pendingSlides, setPendingSlides] = useState<Record<string, any>>({});
+  const [pendingSermonSizes, setPendingSermonSizes] = useState<Record<string, string>>({});
+  const [pendingRosters, setPendingRosters] = useState<Record<string, any>>({});
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const slideSaveTimer = useRef(0);
   const rosterSaveTimer = useRef(0);
   const setlistFp = useRef("");
@@ -163,8 +170,14 @@ export default function Live() {
 
   useEffect(() => {
     if (!presentation?.id) return;
-    return subscribePresentation(presentation.id, setPresentation);
-  }, [presentation?.id]);
+    return subscribePresentation(presentation.id, (next) => {
+      if (editMode && Object.keys(pendingPresentation).length > 0) {
+        setPresentation({ ...next, ...pendingPresentation });
+      } else {
+        setPresentation(next);
+      }
+    });
+  }, [presentation?.id, editMode, pendingPresentation]);
 
   useEffect(() => {
     if (!setlistId) return;
@@ -223,15 +236,42 @@ export default function Live() {
     return () => window.clearInterval(id);
   }, [presentation?.started_at, presentation?.status]);
 
-  const cues = useMemo(() => (setlist ? buildCues(setlist) : []), [setlist]);
-  const live = presentation?.status === "live";
-  const liveIndex = presentation ? cueIndexFor(presentation, cues) : 0;
-  const index = live ? liveIndex : previewIndex;
+  const displayPresentation = useMemo(() => {
+    if (!presentation) return null;
+    return { ...presentation, ...pendingPresentation };
+  }, [presentation, pendingPresentation]);
+
+  const displaySetlist = useMemo(() => {
+    if (!setlist) return null;
+    return {
+      ...setlist,
+      items: setlist.items.map((item) => {
+        let sermon = item.sermon;
+        if (sermon) {
+          const size = pendingSermonSizes[sermon.id];
+          const slides = sermon.slides.map((slide) => {
+            const pending = pendingSlides[slide.id];
+            return pending ? { ...slide, ...pending } : slide;
+          });
+          sermon = { ...sermon, text_size: size ?? sermon.text_size, slides };
+        }
+        const pendingRoster = pendingRosters[item.id];
+        return pendingRoster
+          ? { ...item, ...pendingRoster, sermon }
+          : { ...item, sermon };
+      }),
+    };
+  }, [setlist, pendingSlides, pendingSermonSizes, pendingRosters]);
+
+  const cues = useMemo(() => (displaySetlist ? buildCues(displaySetlist) : []), [displaySetlist]);
+  const live = displayPresentation?.status === "live";
+  const liveIndex = displayPresentation ? cueIndexFor(displayPresentation, cues) : 0;
+  const index = live && !editMode ? liveIndex : previewIndex;
   const active: LiveCue | undefined = cues[index];
   const nextCue = cues[index + 1];
   const darkText = stageUsesDarkText(stageBg);
-  const transitionSec = ((presentation?.transition_ms ?? 400) / 1000).toFixed(1);
-  const currentItem = setlist?.items?.find((row) => row.id === active?.itemId);
+  const transitionSec = ((displayPresentation?.transition_ms ?? 400) / 1000).toFixed(1);
+  const currentItem = displaySetlist?.items?.find((row) => row.id === active?.itemId);
   const currentSlide = currentItem?.sermon?.slides?.find(
     (row) => row.id === active?.slideId,
   );
@@ -242,34 +282,138 @@ export default function Live() {
   const sermonActive = active?.kind === "sermon" && Boolean(currentItem?.sermon_id);
   const rosterActive = active?.kind === "roster" && Boolean(currentItem?.id);
 
+  const hasPending =
+    Object.keys(pendingPresentation).length > 0 ||
+    Object.keys(pendingSettings).length > 0 ||
+    Object.keys(pendingSlides).length > 0 ||
+    Object.keys(pendingSermonSizes).length > 0 ||
+    Object.keys(pendingRosters).length > 0;
+
   const refreshSetlist = useCallback(() => {
     if (!setlistId) return Promise.resolve();
     return getSetlist(setlistId, { fresh: true }).then(applySetlist);
   }, [setlistId, applySetlist]);
+
+  const applyChanges = useCallback(async () => {
+    if (!presentation) return;
+    setBusy(true);
+    try {
+      if (Object.keys(pendingPresentation).length > 0) {
+        await updatePresentation(presentation.id, pendingPresentation).then(setPresentation);
+      }
+      if (Object.keys(pendingSettings).length > 0) {
+        await patchChurchSettings(pendingSettings);
+      }
+      for (const [id, patch] of Object.entries(pendingSlides)) {
+        await updateSermonSlide(id, patch);
+      }
+      for (const [id, size] of Object.entries(pendingSermonSizes)) {
+        await updateSermonTextSize(id, size);
+      }
+      for (const [itemId, patch] of Object.entries(pendingRosters)) {
+        if (!setlist) continue;
+        await updateSetlistItem(setlist.id, itemId, patch);
+      }
+      await refreshSetlist();
+      setPendingPresentation({});
+      setPendingSettings({});
+      setPendingSlides({});
+      setPendingSermonSizes({});
+      setPendingRosters({});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to apply changes.");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    presentation,
+    setlist,
+    pendingPresentation,
+    pendingSettings,
+    pendingSlides,
+    pendingSermonSizes,
+    pendingRosters,
+    refreshSetlist,
+  ]);
+
+  const toggleEditMode = async () => {
+    if (editMode) {
+      if (hasPending) {
+        await applyChanges();
+      }
+      setEditMode(false);
+      setPreviewIndex(liveIndex);
+    } else {
+      setEditMode(true);
+    }
+  };
+
+  const toggleSection = (id: string) => {
+    setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const patchPresentation = useCallback(
+    (patch: Partial<Presentation>) => {
+      if (!presentation) return;
+      if (editMode) {
+        setPendingPresentation((prev) => ({ ...prev, ...patch }));
+        return;
+      }
+      void updatePresentation(presentation.id, patch).then(setPresentation);
+    },
+    [presentation, editMode],
+  );
+
+  const patchSettings = useCallback(
+    (patch: any) => {
+      if (editMode) {
+        setPendingSettings((prev: any) => ({ ...prev, ...patch }));
+        if (patch.stage_background) setStageBg(asStageBackground(patch.stage_background));
+        if (patch.default_font) setFont(asStageFont(patch.default_font));
+        if (patch.lyrics_text_size) setLyricSize(patch.lyrics_text_size);
+        if (patch.lyrics_text_style) setLyricStyle(parseLyricTextStyle(patch.lyrics_text_style));
+        return;
+      }
+      void patchChurchSettings(patch).catch((err) =>
+        setError(err instanceof Error ? err.message : "Could not update settings."),
+      );
+    },
+    [editMode],
+  );
 
   const { bind: bindCue } = useHoldReorder(
     "live-cues",
     (fromId, toId) => {
       const from = cues.find((row) => row.id === fromId);
       const to = cues.find((row) => row.id === toId);
-      if (!from || !to || !setlist) return;
+      if (!from || !to || !displaySetlist) return;
       if (
         from.itemId === to.itemId &&
         from.slideId &&
         to.slideId &&
         from.slideId !== to.slideId
       ) {
-        const item = setlist.items?.find((row) => row.id === from.itemId);
-        if (!item?.sermon_id) return;
-        const ids = [...(item.sermon?.slides ?? [])]
+        const item = displaySetlist.items?.find((row) => row.id === from.itemId);
+        if (!item?.sermon_id || !item.sermon) return;
+        const ids = [...(item.sermon.slides ?? [])]
           .sort((a, b) => a.sort_order - b.sort_order)
           .map((row) => row.id);
-        const next = moveItem(
-          ids,
-          ids.indexOf(from.slideId),
-          ids.indexOf(to.slideId),
+        const fromIndex = ids.indexOf(from.slideId);
+        const toIndex = ids.indexOf(to.slideId);
+        if (fromIndex === -1 || toIndex === -1) return;
+
+        const nextIds = moveItem(ids, fromIndex, toIndex);
+        const nextSlides = moveItem([...(item.sermon.slides ?? [])], fromIndex, toIndex);
+
+        // Optimistic update for sermon slides in the setlist item
+        const nextItems = (displaySetlist.items ?? []).map((row) =>
+          row.id === item.id
+            ? { ...row, sermon: { ...row.sermon!, slides: nextSlides } }
+            : row,
         );
-        void reorderSermonSlides(item.sermon_id, next)
+        applySetlist({ ...displaySetlist, items: nextItems });
+
+        void reorderSermonSlides(item.sermon_id, nextIds)
           .then(refreshSetlist)
           .catch((err) =>
             setError(err instanceof Error ? err.message : "Could not reorder points."),
@@ -277,9 +421,18 @@ export default function Live() {
         return;
       }
       if (from.itemId === to.itemId) return;
-      const ids = (setlist.items ?? []).map((row) => row.id);
-      const next = moveItem(ids, ids.indexOf(from.itemId), ids.indexOf(to.itemId));
-      void reorderSetlistItems(setlist.id, next)
+      const ids = (displaySetlist.items ?? []).map((row) => row.id);
+      const fromIndex = ids.indexOf(from.itemId);
+      const toIndex = ids.indexOf(to.itemId);
+      if (fromIndex === -1 || toIndex === -1) return;
+
+      const nextIds = moveItem(ids, fromIndex, toIndex);
+      const nextItems = moveItem([...(displaySetlist.items ?? [])], fromIndex, toIndex);
+
+      // Optimistic update for setlist items
+      applySetlist({ ...displaySetlist, items: nextItems });
+
+      void reorderSetlistItems(displaySetlist.id, nextIds)
         .then(applySetlist)
         .catch((err) =>
           setError(err instanceof Error ? err.message : "Could not reorder the setlist."),
@@ -291,10 +444,19 @@ export default function Live() {
   const { bind: bindItem } = useHoldReorder(
     "live-items",
     (fromId, toId) => {
-      if (!setlist) return;
-      const ids = (setlist.items ?? []).map((row) => row.id);
-      const next = moveItem(ids, ids.indexOf(fromId), ids.indexOf(toId));
-      void reorderSetlistItems(setlist.id, next)
+      if (!displaySetlist) return;
+      const ids = (displaySetlist.items ?? []).map((row) => row.id);
+      const fromIndex = ids.indexOf(fromId);
+      const toIndex = ids.indexOf(toId);
+      if (fromIndex === -1 || toIndex === -1) return;
+
+      const nextIds = moveItem(ids, fromIndex, toIndex);
+      const nextItems = moveItem([...(displaySetlist.items ?? [])], fromIndex, toIndex);
+
+      // Optimistic update for setlist items
+      applySetlist({ ...displaySetlist, items: nextItems });
+
+      void reorderSetlistItems(displaySetlist.id, nextIds)
         .then(applySetlist)
         .catch((err) =>
           setError(err instanceof Error ? err.message : "Could not reorder the setlist."),
@@ -303,19 +465,36 @@ export default function Live() {
     live,
   );
 
+  const { bind: bindRosterRole } = useHoldReorder(
+    "roster-roles",
+    (fromId, toId) => {
+      if (!rosterDraft || !displaySetlist) return;
+      const fromIndex = Number.parseInt(fromId, 10);
+      const toIndex = Number.parseInt(toId, 10);
+      const roles = moveItem(rosterDraft.roles, fromIndex, toIndex);
+      const next = { ...rosterDraft, roles };
+      setRosterDraft(next);
+      saveRoster(next);
+    },
+    live,
+  );
+
   useEffect(() => {
     if (titleSlide) {
       setPointDraft("");
-      setVerseDraft(firstSlide?.scripture_reference ?? "");
+      const pending = firstSlide ? pendingSlides[firstSlide.id] : null;
+      setVerseDraft(pending?.scripture_reference ?? firstSlide?.scripture_reference ?? "");
       return;
     }
-    setPointDraft(currentSlide?.content ?? "");
+    const pending = currentSlide ? pendingSlides[currentSlide.id] : null;
+    setPointDraft(pending?.content ?? currentSlide?.content ?? "");
     setVerseDraft("");
   }, [
     currentSlide?.id,
     firstSlide?.id,
     firstSlide?.scripture_reference,
     titleSlide,
+    pendingSlides,
   ]);
 
   const goToCue = useCallback(
@@ -337,17 +516,27 @@ export default function Live() {
     [cues, presentation],
   );
 
+  const goLiveNext = useCallback(() => {
+    if (!presentation || !cues.length) return;
+    void goToCue(liveIndex + 1);
+  }, [presentation, cues.length, liveIndex, goToCue]);
+
+  const goLivePrev = useCallback(() => {
+    if (!presentation || !cues.length) return;
+    void goToCue(liveIndex - 1);
+  }, [presentation, cues.length, liveIndex, goToCue]);
+
   const selectCue = useCallback(
     (nextIndex: number) => {
       if (!cues.length) return;
       const bounded = Math.max(0, Math.min(cues.length - 1, nextIndex));
-      if (live) {
+      if (live && !editMode) {
         void goToCue(bounded);
         return;
       }
       setPreviewIndex(bounded);
     },
-    [cues.length, goToCue, live],
+    [cues.length, goToCue, live, editMode],
   );
 
   const readVerseTranslation = (): FreeBibleTranslation => {
@@ -368,16 +557,15 @@ export default function Live() {
     } catch {
       /* ignore */
     }
-    if (!presentation) return;
-    void updatePresentation(presentation.id, {
+    patchPresentation({
       verse_overlay_translation: next,
       verse_overlay_page: 0,
-    }).then(setPresentation);
+    });
   };
 
   const openVerse = (_raw: string, parsed: ParsedBibleRef) => {
     if (!live || !presentation) return;
-    void updatePresentation(presentation.id, {
+    patchPresentation({
       verse_overlay_ref: formatBibleReference(
         parsed.book,
         parsed.chapter,
@@ -386,23 +574,33 @@ export default function Live() {
       verse_overlay_translation: readVerseTranslation(),
       verse_overlay_page: 0,
       verse_overlay_take: 5,
-    }).then(setPresentation);
+    });
   };
 
   const closeVerse = useCallback(() => {
-    if (!presentation) return;
-    void updatePresentation(presentation.id, {
+    patchPresentation({
       verse_overlay_ref: null,
       verse_overlay_translation: null,
       verse_overlay_page: 0,
       verse_overlay_take: 5,
-    }).then(setPresentation);
-  }, [presentation]);
+    });
+  }, [patchPresentation]);
 
   const savePoint = (content: string, verse: string) => {
     if (!live) return;
     const slide = titleSlide ? firstSlide : currentSlide;
     if (!slide) return;
+
+    if (editMode) {
+      setPendingSlides((prev) => ({
+        ...prev,
+        [slide.id]: titleSlide
+          ? { scripture_reference: verse.trim() || null }
+          : { content },
+      }));
+      return;
+    }
+
     window.clearTimeout(slideSaveTimer.current);
     slideSaveTimer.current = window.setTimeout(() => {
       void updateSermonSlide(
@@ -417,7 +615,20 @@ export default function Live() {
   };
 
   const saveRoster = (next: RosterPayload) => {
-    if (!live || !setlist || !currentItem || currentItem.item_type !== "roster") return;
+    if (!live || !displaySetlist || !currentItem || currentItem.item_type !== "roster") return;
+
+    if (editMode) {
+      setPendingRosters((prev) => ({
+        ...prev,
+        [currentItem.id]: {
+          title: next.heading.trim() || "Next Week",
+          subtitle: formatRosterDate(next.date),
+          payload: next,
+        },
+      }));
+      return;
+    }
+
     window.clearTimeout(rosterSaveTimer.current);
     rosterSaveTimer.current = window.setTimeout(() => {
       void updateSetlistItem(setlist.id, currentItem.id, {
@@ -435,15 +646,16 @@ export default function Live() {
       setRosterDraft(null);
       return;
     }
-    setRosterDraft(normalizeRoster(currentItem.payload));
-  }, [currentItem?.id]);
+    const pending = pendingRosters[currentItem.id];
+    setRosterDraft(pending?.payload ?? normalizeRoster(currentItem.payload));
+  }, [currentItem?.id, pendingRosters]);
 
   useEffect(() => {
     setPreviewIndex(0);
   }, [setlistId]);
 
   useEffect(() => {
-    if (live) {
+    if (live && !editMode) {
       setPreviewIndex(liveIndex);
       return;
     }
@@ -452,7 +664,7 @@ export default function Live() {
       return;
     }
     setPreviewIndex((n) => Math.min(n, cues.length - 1));
-  }, [cues.length, live, liveIndex]);
+  }, [cues.length, live, liveIndex, editMode]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -464,6 +676,19 @@ export default function Live() {
         event.stopPropagation();
         closeVerse();
         return;
+      }
+
+      if (editMode && live) {
+        if (event.shiftKey && (event.code === "Space" || event.key === "ArrowRight")) {
+          event.preventDefault();
+          goLiveNext();
+          return;
+        }
+        if (event.shiftKey && event.key === "ArrowLeft") {
+          event.preventDefault();
+          goLivePrev();
+          return;
+        }
       }
 
       if (event.code === "Space" || event.key === "ArrowRight") {
@@ -483,14 +708,24 @@ export default function Live() {
       if (event.key.toLowerCase() === "b" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         if (!presentation) return;
-        void updatePresentation(presentation.id, {
+        patchPresentation({
           is_blackout: !presentation.is_blackout,
-        }).then(setPresentation);
+        });
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [closeVerse, index, live, presentation, selectCue]);
+  }, [
+    closeVerse,
+    index,
+    live,
+    presentation,
+    selectCue,
+    patchPresentation,
+    editMode,
+    goLiveNext,
+    goLivePrev,
+  ]);
 
   const goLive = async () => {
     if (!setlistId) return;
@@ -573,6 +808,31 @@ export default function Live() {
                 {live ? "On Air" : "Standby"}
               </span>
             </div>
+            {live && editMode && (
+              <div className="flex items-center bg-surface-container-high rounded-full border border-white/10 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={goLivePrev}
+                  className="p-1.5 hover:bg-white/5 text-on-surface-variant transition-colors"
+                  title="Previous Live Slide"
+                >
+                  <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                </button>
+                <div className="w-px h-4 bg-white/10" />
+                <span className="px-2 text-[10px] font-bold text-primary tabular-nums">
+                  LIVE: {liveIndex + 1}
+                </span>
+                <div className="w-px h-4 bg-white/10" />
+                <button
+                  type="button"
+                  onClick={goLiveNext}
+                  className="p-1.5 hover:bg-white/5 text-on-surface-variant transition-colors"
+                  title="Next Live Slide"
+                >
+                  <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+                </button>
+              </div>
+            )}
             <span className="text-xs text-on-surface-variant font-mono">
               {formatTime(elapsed)}
             </span>
@@ -582,7 +842,25 @@ export default function Live() {
           {live ? (
             <button
               type="button"
-              onClick={() => void openProjectorWindow(presentation.id)}
+              onClick={toggleEditMode}
+              className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border transition-all active:scale-95 ${
+                editMode
+                  ? "bg-secondary text-on-secondary border-secondary shadow-[0_0_15px_rgba(var(--secondary-rgb),0.3)]"
+                  : "bg-surface-container-high border-white/10 hover:bg-white/5 text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">
+                {editMode ? "edit_off" : "edit"}
+              </span>
+              <span className="text-xs font-semibold hidden sm:inline">
+                {editMode ? "Stop Editing" : "Edit Mode"}
+              </span>
+            </button>
+          ) : null}
+          {live && displayPresentation ? (
+            <button
+              type="button"
+              onClick={() => void openProjectorWindow(displayPresentation.id)}
               className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-container-high border border-white/10 hover:bg-white/5 transition-all active:scale-95"
             >
               <span className="material-symbols-outlined text-[18px]">
@@ -591,7 +869,7 @@ export default function Live() {
               <span className="text-xs font-medium">Open Output</span>
             </button>
           ) : null}
-          {live ? (
+          {live && displayPresentation ? (
             <button
               type="button"
               disabled={busy}
@@ -623,9 +901,9 @@ export default function Live() {
         </div>
       </header>
 
-      <main className="pt-16 h-screen flex">
-        <aside className="hidden lg:flex w-[280px] border-r border-white/5 bg-surface-container-lowest/50 flex-col h-[calc(100vh-4rem)]">
-          <div className="p-4 border-b border-white/5 bg-surface-container-low">
+      <main className="pt-16 h-screen flex overflow-hidden">
+        <aside className="hidden lg:flex w-[280px] border-r border-white/5 bg-surface-container-lowest/50 flex-col h-full overflow-y-auto custom-scrollbar shrink-0">
+          <div className="p-4 border-b border-white/5 bg-surface-container-low shrink-0">
             <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant mb-2">
               Setlist
             </h3>
@@ -710,11 +988,7 @@ export default function Live() {
                     onKeyDown={(event) => {
                       if (event.key === "Enter") selectCue(cueIndex);
                     }}
-                    className={`w-full text-left relative p-3 rounded-lg transition-colors border select-none touch-none ${
-                      live
-                        ? "cursor-grab active:cursor-grabbing"
-                        : "cursor-pointer"
-                    } ${
+                    className={`w-full text-left relative p-3 rounded-lg transition-colors border select-none touch-none cursor-grab active:cursor-grabbing ${
                       isActive
                         ? accent === "tertiary"
                           ? "border-tertiary bg-tertiary/10"
@@ -726,13 +1000,18 @@ export default function Live() {
                           : "border-white/5 hover:bg-white/5"
                     }`}
                   >
-                    <span className="absolute top-2 right-3 text-[10px] font-bold text-primary/50">
-                      {item.tag}
-                    </span>
+                    <div className="absolute top-2 right-3 flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-on-surface-variant/40 tabular-nums">
+                        #{cueIndex + 1}
+                      </span>
+                      <span className="text-[10px] font-bold text-primary/50 uppercase tracking-wider">
+                        {item.tag}
+                      </span>
+                    </div>
                     <div className="text-[10px] font-semibold tracking-wider mb-1 text-on-surface-variant">
                       {item.sectionLabel || item.label}
                     </div>
-                    <p className="text-sm leading-snug text-on-surface line-clamp-2">
+                    <p className={`text-sm leading-snug text-on-surface line-clamp-2 ${item.kind === "sermon" ? "font-bold" : ""}`}>
                       {item.heading && item.kind === "lyric"
                         ? `${item.heading} · ${item.preview}`
                         : item.preview}
@@ -809,31 +1088,48 @@ export default function Live() {
                   </div>
                 )}
               </div>
-              <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1 bg-primary rounded text-on-primary font-bold text-[10px] uppercase">
-                {live ? "On Air Preview" : "Standby Preview"}
+              <div className={`absolute top-4 left-4 flex items-center gap-2 px-3 py-1 rounded font-bold text-[10px] uppercase shadow-lg z-10 transition-colors ${editMode ? "bg-secondary text-on-secondary" : "bg-primary text-on-primary"}`}>
+                {editMode ? (
+                  <>
+                    <span className="material-symbols-outlined text-[12px]">edit</span>
+                    Edit Mode: Preview Only
+                  </>
+                ) : live ? (
+                  "On Air Preview"
+                ) : (
+                  "Standby Preview"
+                )}
               </div>
-              {presentation?.verse_overlay_ref ? (
+              {displayPresentation?.verse_overlay_ref ? (
                 <VerseOverlay
-                  reference={presentation.verse_overlay_ref}
-                  translation={presentation.verse_overlay_translation || "ceb"}
+                  reference={displayPresentation.verse_overlay_ref}
+                  translation={displayPresentation.verse_overlay_translation || "ceb"}
                   font={font}
                   textSize={
                     active?.kind === "lyric"
                       ? lyricSize
                       : active?.textSize || "md"
                   }
+                  textStyle={displayPresentation.verse_overlay_text_style}
+                  color={displayPresentation.verse_overlay_color}
                   paddingTop={52}
-                  page={presentation.verse_overlay_page ?? 0}
-                  pageSize={presentation.verse_overlay_take || 5}
+                  page={displayPresentation.verse_overlay_page ?? 0}
+                  pageSize={displayPresentation.verse_overlay_take || 5}
                   onPageChange={(next) => {
-                    void updatePresentation(presentation.id, {
+                    patchPresentation({
                       verse_overlay_page: next,
-                    }).then(setPresentation);
+                    });
                   }}
                   onPageSizeChange={(next) => {
-                    void updatePresentation(presentation.id, {
+                    patchPresentation({
                       verse_overlay_take: next,
-                    }).then(setPresentation);
+                    });
+                  }}
+                  onReferenceChange={(next) => {
+                    patchPresentation({
+                      verse_overlay_ref: next,
+                      verse_overlay_page: 0,
+                    });
                   }}
                   onClose={closeVerse}
                 />
@@ -879,7 +1175,7 @@ export default function Live() {
         </section>
 
         <aside
-          className={`hidden xl:flex border-l border-white/5 bg-surface-container-lowest/50 flex-col p-4 gap-6 h-[calc(100vh-4rem)] overflow-y-auto custom-scrollbar transition-[width] duration-200 ${
+          className={`hidden xl:flex border-l border-white/5 bg-surface-container-lowest/50 flex-col p-4 gap-6 h-full overflow-y-auto custom-scrollbar shrink-0 transition-[width] duration-200 ${
             pointEditorActive || rosterActive ? "w-[min(560px,46vw)]" : "w-[320px]"
           }`}
         >
@@ -894,14 +1190,14 @@ export default function Live() {
               type="button"
               disabled={!live}
               onClick={() => {
-                if (!presentation) return;
-                void updatePresentation(presentation.id, {
-                  is_blackout: !presentation.is_blackout,
-                  show_logo: presentation.is_blackout ? presentation.show_logo : false,
-                }).then(setPresentation);
+                if (!displayPresentation) return;
+                patchPresentation({
+                  is_blackout: !displayPresentation.is_blackout,
+                  show_logo: displayPresentation.is_blackout ? displayPresentation.show_logo : false,
+                });
               }}
               className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all active:scale-95 disabled:opacity-40 ${
-                presentation?.is_blackout
+                displayPresentation?.is_blackout
                   ? "border-error bg-error/20"
                   : "border-error/20 bg-error/10 hover:bg-error/20"
               }`}
@@ -917,14 +1213,14 @@ export default function Live() {
               type="button"
               disabled={!live}
               onClick={() => {
-                if (!presentation) return;
-                void updatePresentation(presentation.id, {
-                  show_logo: !presentation.show_logo,
-                  is_blackout: presentation.show_logo ? presentation.is_blackout : false,
-                }).then(setPresentation);
+                if (!displayPresentation) return;
+                patchPresentation({
+                  show_logo: !displayPresentation.show_logo,
+                  is_blackout: displayPresentation.show_logo ? displayPresentation.is_blackout : false,
+                });
               }}
               className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all active:scale-95 disabled:opacity-40 ${
-                presentation?.show_logo
+                displayPresentation?.show_logo
                   ? "border-primary bg-primary/20"
                   : "border-primary/20 bg-primary/10 hover:bg-primary/20"
               }`}
@@ -939,231 +1235,233 @@ export default function Live() {
           </div>
 
           <div className="space-y-2">
-            <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-              Stage background
-            </h4>
-            <StageBackgroundPicker
-              compact
-              disabled={!live}
-              value={stageBg}
-              onChange={(next) => {
-                if (!live) return;
-                setStageBg(next);
-                void patchChurchSettings({ stage_background: next }).catch((err) =>
-                  setError(
-                    err instanceof Error ? err.message : "Could not change background.",
-                  ),
-                );
-              }}
-            />
+            <button
+              type="button"
+              onClick={() => toggleSection("background")}
+              className="w-full flex items-center justify-between group"
+            >
+              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
+                Stage background
+              </h4>
+              <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["background"] ? "-rotate-90" : ""}`}>
+                expand_more
+              </span>
+            </button>
+            {!collapsedSections["background"] && (
+              <StageBackgroundPicker
+                compact
+                disabled={!live}
+                value={stageBg}
+                onChange={(next) => {
+                  if (!live) return;
+                  setStageBg(next);
+                  patchSettings({ stage_background: next });
+                }}
+              />
+            )}
           </div>
 
           {rosterActive && rosterDraft ? (
             <div className="space-y-3">
-              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                Assignments
-              </h4>
-              <input
-                value={rosterDraft.heading}
-                disabled={!live}
-                onChange={(event) => {
-                  const next = { ...rosterDraft, heading: event.target.value };
-                  setRosterDraft(next);
-                  saveRoster(next);
-                }}
-                className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
-              />
-              <input
-                type="date"
-                value={rosterDraft.date}
-                disabled={!live}
-                onChange={(event) => {
-                  const next = { ...rosterDraft, date: event.target.value };
-                  setRosterDraft(next);
-                  saveRoster(next);
-                }}
-                className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm"
-              />
-              <div className="space-y-2">
-                {rosterDraft.roles.map((row, index) => (
-                  <div key={index} className="flex gap-2">
-                    <input
-                      value={row.role}
-                      disabled={!live}
-                      onChange={(event) => {
-                        const roles = rosterDraft.roles.map((item, i) =>
-                          i === index ? { ...item, role: event.target.value } : item,
-                        );
-                        const next = { ...rosterDraft, roles };
-                        setRosterDraft(next);
-                        saveRoster(next);
-                      }}
-                      className="w-[46%] bg-surface-container-low border border-white/10 rounded-lg px-2 py-1.5 text-xs"
-                      placeholder="Role"
-                    />
-                    <input
-                      value={row.name}
-                      disabled={!live}
-                      onChange={(event) => {
-                        const roles = rosterDraft.roles.map((item, i) =>
-                          i === index ? { ...item, name: event.target.value } : item,
-                        );
-                        const next = { ...rosterDraft, roles };
-                        setRosterDraft(next);
-                        saveRoster(next);
-                      }}
-                      className="flex-1 bg-surface-container-low border border-white/10 rounded-lg px-2 py-1.5 text-xs"
-                      placeholder="Name"
-                    />
+              <button
+                type="button"
+                onClick={() => toggleSection("roster")}
+                className="w-full flex items-center justify-between group"
+              >
+                <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
+                  Assignments
+                </h4>
+                <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["roster"] ? "-rotate-90" : ""}`}>
+                  expand_more
+                </span>
+              </button>
+              {!collapsedSections["roster"] && (
+                <>
+                  <input
+                    value={rosterDraft.heading}
+                    disabled={!live}
+                    onChange={(event) => {
+                      const next = { ...rosterDraft, heading: event.target.value };
+                      setRosterDraft(next);
+                      saveRoster(next);
+                    }}
+                    className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+                  />
+                  <input
+                    type="date"
+                    value={rosterDraft.date}
+                    disabled={!live}
+                    onChange={(event) => {
+                      const next = { ...rosterDraft, date: event.target.value };
+                      setRosterDraft(next);
+                      saveRoster(next);
+                    }}
+                    className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm"
+                  />
+                  <div className="space-y-2">
+                    {rosterDraft.roles.map((row, index) => {
+                      const hold = bindRosterRole(String(index));
+                      return (
+                      <div key={index} {...hold} className="flex gap-2 select-none touch-none cursor-grab active:cursor-grabbing">
+                        <span
+                          className="text-on-surface-variant hover:text-on-surface shrink-0 mt-1.5"
+                          aria-hidden
+                        >
+                          <span className="material-symbols-outlined text-[16px]">
+                            drag_indicator
+                          </span>
+                        </span>
+                        <input
+                          value={row.role}
+                          disabled={!live}
+                          data-hold-ignore
+                          onChange={(event) => {
+                            const roles = rosterDraft.roles.map((item, i) =>
+                              i === index ? { ...item, role: event.target.value } : item,
+                            );
+                            const next = { ...rosterDraft, roles };
+                            setRosterDraft(next);
+                            saveRoster(next);
+                          }}
+                          className="w-[46%] bg-surface-container-low border border-white/10 rounded-lg px-2 py-1.5 text-xs"
+                          placeholder="Role"
+                        />
+                        <input
+                          value={row.name}
+                          disabled={!live}
+                          data-hold-ignore
+                          onChange={(event) => {
+                            const roles = rosterDraft.roles.map((item, i) =>
+                              i === index ? { ...item, name: event.target.value } : item,
+                            );
+                            const next = { ...rosterDraft, roles };
+                            setRosterDraft(next);
+                            saveRoster(next);
+                          }}
+                          className="flex-1 bg-surface-container-low border border-white/10 rounded-lg px-2 py-1.5 text-xs"
+                          placeholder="Name"
+                        />
+                        <button
+                          type="button"
+                          disabled={!live || rosterDraft.roles.length <= 1}
+                          onClick={() => {
+                            const next = {
+                              ...rosterDraft,
+                              roles: rosterDraft.roles.filter((_, i) => i !== index),
+                            };
+                            setRosterDraft(next);
+                            saveRoster(next);
+                          }}
+                          className="text-on-surface-variant hover:text-error disabled:opacity-30"
+                          aria-label="Remove role"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                      </div>
+                      );
+                    })}
                     <button
                       type="button"
-                      disabled={!live || rosterDraft.roles.length <= 1}
+                      disabled={!live}
                       onClick={() => {
                         const next = {
                           ...rosterDraft,
-                          roles: rosterDraft.roles.filter((_, i) => i !== index),
+                          roles: [...rosterDraft.roles, { role: "", name: "" }],
                         };
                         setRosterDraft(next);
                         saveRoster(next);
                       }}
-                      className="text-on-surface-variant hover:text-error disabled:opacity-30"
-                      aria-label="Remove role"
+                      className="text-xs font-semibold text-primary hover:underline disabled:opacity-40"
                     >
-                      <span className="material-symbols-outlined text-[16px]">close</span>
+                      Add role
                     </button>
                   </div>
-                ))}
-                <button
-                  type="button"
-                  disabled={!live}
-                  onClick={() => {
-                    const next = {
-                      ...rosterDraft,
-                      roles: [...rosterDraft.roles, { role: "", name: "" }],
-                    };
-                    setRosterDraft(next);
-                    saveRoster(next);
-                  }}
-                  className="text-xs font-semibold text-primary hover:underline disabled:opacity-40"
-                >
-                  Add role
-                </button>
-              </div>
+                </>
+              )}
             </div>
           ) : null}
 
           {active?.kind === "lyric" || presentation?.verse_overlay_ref ? (
           <div className="space-y-2">
-            <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-              {presentation?.verse_overlay_ref ? "Verse display" : "Lyrics text"}
-            </h4>
-            {presentation?.verse_overlay_ref ? (
-              <div className="grid grid-cols-3 gap-1.5">
-                {FREE_BIBLE_TRANSLATIONS.map((item) => {
-                  const activeLang =
-                    (presentation.verse_overlay_translation || "ceb") === item.value;
-                  return (
-                    <button
-                      key={item.value}
-                      type="button"
-                      disabled={!live}
-                      onClick={() => setVerseTranslation(item.value)}
-                      className={`rounded-lg px-2 py-2 text-[11px] font-semibold leading-tight transition-colors disabled:opacity-40 ${
-                        activeLang
-                          ? "bg-primary text-on-primary"
-                          : "bg-surface-container-low border border-white/10 text-on-surface-variant hover:bg-white/5"
-                      }`}
-                    >
-                      {item.value === "ceb"
-                        ? "Bisaya"
-                        : item.value === "kjv"
-                          ? "English"
-                          : "WEB"}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-            <select
-              value={font}
-              disabled={!live}
-              onChange={(event) => {
-                if (!live) return;
-                const next = asStageFont(event.target.value);
-                setFont(next);
-                void patchChurchSettings({ default_font: next }).catch((err) =>
-                  setError(err instanceof Error ? err.message : "Could not change font."),
-                );
-              }}
-              className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-40"
+            <button
+              type="button"
+              onClick={() => toggleSection("lyrics")}
+              className="w-full flex items-center justify-between group"
             >
-              {STAGE_FONTS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                  {option.id === DEFAULT_STAGE_FONT ? " (Default)" : ""}
-                </option>
-              ))}
-            </select>
-            <TextSizePicker
-              disabled={!live}
-              value={
-                presentation?.verse_overlay_ref && active?.kind !== "lyric"
-                  ? currentItem?.sermon?.text_size || "md"
-                  : lyricSize
-              }
-              onChange={(size) => {
-                if (!live) return;
-                if (presentation?.verse_overlay_ref && active?.kind !== "lyric") {
-                  if (!currentItem?.sermon_id) return;
-                  void updateSermonTextSize(currentItem.sermon_id, size)
-                    .then(refreshSetlist)
-                    .catch((err) =>
-                      setError(
-                        err instanceof Error ? err.message : "Could not change size.",
-                      ),
-                    );
-                  return;
-                }
-                setLyricSize(size);
-                void patchChurchSettings({ lyrics_text_size: size }).catch((err) =>
-                  setError(err instanceof Error ? err.message : "Could not change size."),
-                );
-              }}
-            />
-            <TextStylePicker
-              disabled={!live}
-              value={lyricStyle}
-              onChange={(next) => {
-                if (!live) return;
-                if (presentation?.verse_overlay_ref && active?.kind !== "lyric") return;
-                setLyricStyle(next);
-                void patchChurchSettings({
-                  lyrics_text_style: serializeLyricTextStyle(next),
-                }).catch((err) =>
-                  setError(err instanceof Error ? err.message : "Could not change style."),
-                );
-              }}
-            />
-            <p className="text-[10px] text-on-surface-variant">
-              {presentation?.verse_overlay_ref
-                ? "Bisaya or English updates on the projector. Verse text is black, bold, and underlined."
-                : "Title and section stay in Arial. Only the lyrics use this font and size."}
-            </p>
-          </div>
-          ) : null}
+              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
+                {presentation?.verse_overlay_ref ? "Verse display" : "Lyrics text"}
+              </h4>
+              <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["lyrics"] ? "-rotate-90" : ""}`}>
+                expand_more
+              </span>
+            </button>
+            {!collapsedSections["lyrics"] && (
+              <>
+                {presentation?.verse_overlay_ref ? (
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {FREE_BIBLE_TRANSLATIONS.map((item) => {
+                      const activeLang =
+                        (displayPresentation.verse_overlay_translation || "ceb") === item.value;
+                      return (
+                        <button
+                          key={item.value}
+                          type="button"
+                          disabled={!live}
+                          onClick={() => setVerseTranslation(item.value)}
+                          className={`rounded-lg px-2 py-2 text-[11px] font-semibold leading-tight transition-colors disabled:opacity-40 ${
+                            activeLang
+                              ? "bg-primary text-on-primary"
+                              : "bg-surface-container-low border border-white/10 text-on-surface-variant hover:bg-white/5"
+                          }`}
+                        >
+                          {item.value === "ceb"
+                            ? "Visayan"
+                            : item.value === "niv"
+                              ? "English (NIV)"
+                              : "English (KJV)"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <select
+                  value={font}
+                  disabled={!live}
+                  onChange={(event) => {
+                    if (!live) return;
+                    const next = asStageFont(event.target.value);
+                    setFont(next);
+                    patchSettings({ default_font: next });
+                  }}
+                  className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-40"
+                >
+                  {STAGE_FONTS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                      {option.id === DEFAULT_STAGE_FONT ? " (Default)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <TextSizePicker
+                  disabled={!live}
+                  value={
+                    presentation?.verse_overlay_ref && active?.kind !== "lyric"
+                      ? currentItem?.sermon?.text_size || "md"
+                      : lyricSize
+                  }
+                  onChange={(size) => {
+                    if (!live) return;
+                    if (displayPresentation?.verse_overlay_ref && active?.kind !== "lyric") {
+                      if (!currentItem?.sermon_id) return;
 
-          {sermonActive ? (
-            <div className="space-y-3">
-              {presentation?.verse_overlay_ref ? null : (
-                <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                    Point size
-                  </h4>
-                  <TextSizePicker
-                    disabled={!live}
-                    value={currentItem?.sermon?.text_size || "md"}
-                    onChange={(size) => {
-                      if (!live || !currentItem?.sermon_id) return;
+                      if (editMode) {
+                        setPendingSermonSizes((prev) => ({
+                          ...prev,
+                          [currentItem.sermon_id!]: size,
+                        }));
+                        return;
+                      }
+
                       void updateSermonTextSize(currentItem.sermon_id, size)
                         .then(refreshSetlist)
                         .catch((err) =>
@@ -1171,159 +1469,238 @@ export default function Live() {
                             err instanceof Error ? err.message : "Could not change size.",
                           ),
                         );
-                    }}
-                  />
-                </div>
-              )}
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  disabled={!live || !currentSlide || isSermonSpace(currentSlide.content)}
-                  onClick={() => {
-                    if (!currentSlide || isSermonSpace(currentSlide.content)) return;
-                    const next = insertSermonGap(pointDraft);
-                    setPointDraft(next);
-                    setPointSync((n) => n + 1);
-                    savePoint(next, verseDraft);
+                      return;
+                    }
+                    setLyricSize(size);
+                    patchSettings({ lyrics_text_size: size });
                   }}
-                  className="flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 text-[11px] font-semibold disabled:opacity-40"
-                >
-                  <span className="material-symbols-outlined text-[16px]">
-                    space_bar
-                  </span>
-                  Space
-                </button>
-                <button
-                  type="button"
+                />
+                <TextStylePicker
                   disabled={!live}
-                  onClick={() => {
-                    if (!live || !currentItem?.sermon_id) return;
-                    void insertSermonSlide(currentItem.sermon_id, {
-                      content: "New point",
-                      afterSlideId: currentSlide?.id ?? null,
-                    })
-                      .then(refreshSetlist)
-                      .catch((err) =>
-                        setError(
-                          err instanceof Error ? err.message : "Could not add a point.",
-                        ),
-                      );
+                  value={lyricStyle}
+                  onChange={(next) => {
+                    if (!live) return;
+                    if (presentation?.verse_overlay_ref && active?.kind !== "lyric") return;
+                    setLyricStyle(next);
+                    patchSettings({
+                      lyrics_text_style: serializeLyricTextStyle(next),
+                    });
                   }}
-                  className="flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 text-[11px] font-semibold"
-                >
-                  <span className="material-symbols-outlined text-[16px]">add</span>
-                  Point
-                </button>
-                <button
-                  type="button"
-                  disabled={!live || !currentSlide}
-                  onClick={() => {
-                    if (!currentSlide) return;
-                    void deleteSermonSlide(currentSlide.id)
-                      .then(refreshSetlist)
-                      .catch((err) =>
-                        setError(
-                          err instanceof Error ? err.message : "Could not delete.",
-                        ),
-                      );
-                  }}
-                  className="flex items-center justify-center gap-1 p-3 rounded-xl border border-error/20 text-error hover:bg-error/10 text-[11px] font-semibold disabled:opacity-40"
-                >
-                  <span className="material-symbols-outlined text-[16px]">delete</span>
-                  Delete
-                </button>
-              </div>
-              {titleSlide && firstSlide ? (
-                <div className="space-y-2">
-                  <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                    Title verse
-                  </h4>
-                  <input
-                    value={verseDraft}
-                    disabled={!live}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setVerseDraft(value);
-                      savePoint(pointDraft, value);
-                    }}
-                    className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
-                    placeholder="Verse · Fil 3:14"
-                  />
-                  <p className="text-[10px] text-on-surface-variant">
-                    This verse sits at the bottom of the title slide only.
-                  </p>
-                </div>
-              ) : currentSlide && !isSermonSpace(currentSlide.content) ? (
-                <div className="space-y-2">
-                  <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                    Edit point
-                  </h4>
-                  <PointEditor
-                    value={pointDraft}
-                    readOnly={!live}
-                    expanded={pointEditorActive}
-                    syncNonce={pointSync}
-                    onFocusChange={setPointEditorActive}
-                    onChange={(next) => {
-                      if (!live) return;
-                      setPointDraft(next);
-                      savePoint(next, verseDraft);
-                    }}
-                  />
-                </div>
-              ) : (
-                <p className="text-xs text-on-surface-variant">
-                  This is a space. Advance when you are ready for the next point.
+                />
+                <p className="text-[10px] text-on-surface-variant">
+                  {presentation?.verse_overlay_ref
+                    ? "Visayan, English (KJV), or English (NIV) updates on the projector. Verse text is black, bold, and underlined."
+                    : "Title and section stay in Arial. Only the lyrics use this font and size."}
                 </p>
+              </>
+            )}
+          </div>
+          ) : null}
+
+          {sermonActive ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => toggleSection("sermon")}
+                className="w-full flex items-center justify-between group"
+              >
+                <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
+                  Sermon Control
+                </h4>
+                <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["sermon"] ? "-rotate-90" : ""}`}>
+                  expand_more
+                </span>
+              </button>
+              {!collapsedSections["sermon"] && (
+                <>
+                  {presentation?.verse_overlay_ref ? null : (
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
+                        Point size
+                      </h4>
+                      <TextSizePicker
+                        disabled={!live}
+                        value={currentItem?.sermon?.text_size || "md"}
+                        onChange={(size) => {
+                          if (!live || !currentItem?.sermon_id) return;
+                          
+                          if (editMode) {
+                            setPendingSermonSizes((prev) => ({
+                              ...prev,
+                              [currentItem.sermon_id!]: size,
+                            }));
+                            return;
+                          }
+
+                          void updateSermonTextSize(currentItem.sermon_id, size)
+                            .then(refreshSetlist)
+                            .catch((err) =>
+                              setError(
+                                err instanceof Error ? err.message : "Could not change size.",
+                              ),
+                            );
+                        }}
+                      />
+                    </div>
+                  )}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      disabled={!live || !currentSlide || isSermonSpace(currentSlide.content)}
+                      onClick={() => {
+                        if (!currentSlide || isSermonSpace(currentSlide.content)) return;
+                        const next = insertSermonGap(pointDraft);
+                        setPointDraft(next);
+                        setPointSync((n) => n + 1);
+                        savePoint(next, verseDraft);
+                      }}
+                      className="flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 text-[11px] font-semibold disabled:opacity-40"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        space_bar
+                      </span>
+                      Space
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!live}
+                      onClick={() => {
+                        if (!live || !currentItem?.sermon_id) return;
+                        void insertSermonSlide(currentItem.sermon_id, {
+                          content: "New point",
+                          afterSlideId: currentSlide?.id ?? null,
+                        })
+                          .then(refreshSetlist)
+                          .catch((err) =>
+                            setError(
+                              err instanceof Error ? err.message : "Could not add a point.",
+                            ),
+                          );
+                      }}
+                      className="flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 text-[11px] font-semibold"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">add</span>
+                      Point
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!live || !currentSlide}
+                      onClick={() => {
+                        if (!currentSlide) return;
+                        void deleteSermonSlide(currentSlide.id)
+                          .then(refreshSetlist)
+                          .catch((err) =>
+                            setError(
+                              err instanceof Error ? err.message : "Could not delete.",
+                            ),
+                          );
+                      }}
+                      className="flex items-center justify-center gap-1 p-3 rounded-xl border border-error/20 text-error hover:bg-error/10 text-[11px] font-semibold disabled:opacity-40"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">delete</span>
+                      Delete
+                    </button>
+                  </div>
+                  {titleSlide && firstSlide ? (
+                    <div className="space-y-2">
+                      <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
+                        Title verse
+                      </h4>
+                      <input
+                        value={verseDraft}
+                        disabled={!live}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setVerseDraft(value);
+                          savePoint(pointDraft, value);
+                        }}
+                        className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+                        placeholder="Verse · Fil 3:14"
+                      />
+                      <p className="text-[10px] text-on-surface-variant">
+                        This verse sits at the bottom of the title slide only.
+                      </p>
+                    </div>
+                  ) : currentSlide && !isSermonSpace(currentSlide.content) ? (
+                    <div className="space-y-2">
+                      <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
+                        Edit point
+                      </h4>
+                      <PointEditor
+                        value={pointDraft}
+                        readOnly={!live}
+                        expanded={pointEditorActive}
+                        syncNonce={pointSync}
+                        onFocusChange={setPointEditorActive}
+                        onChange={(next) => {
+                          if (!live) return;
+                          setPointDraft(next);
+                          savePoint(next, verseDraft);
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-on-surface-variant">
+                      This is a space. Advance when you are ready for the next point.
+                    </p>
+                  )}
+                </>
               )}
             </div>
           ) : null}
 
           <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
+            <button
+              type="button"
+              onClick={() => toggleSection("transition")}
+              className="w-full flex items-center justify-between group"
+            >
+              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
                 Transition Speed
               </h4>
-              <span className="font-mono text-xs text-primary">{transitionSec}s</span>
-            </div>
-            <input
-              className="w-full h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary"
-              max={2}
-              min={0}
-              step={0.1}
-              type="range"
-              disabled={!live}
-              value={(presentation?.transition_ms ?? 400) / 1000}
-              onChange={(event) => {
-                if (!presentation) return;
-                const ms = Math.round(Number(event.target.value) * 1000);
-                void updatePresentation(presentation.id, { transition_ms: ms }).then(
-                  setPresentation,
-                );
-              }}
-            />
-            <div className="flex justify-between text-[10px] text-on-surface-variant font-medium">
-              <span>CUT</span>
-              <span>SMOOTH</span>
-            </div>
+              <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["transition"] ? "-rotate-90" : ""}`}>
+                expand_more
+              </span>
+            </button>
+            {!collapsedSections["transition"] && (
+              <>
+                <div className="flex justify-between items-center">
+                  <span className="font-mono text-xs text-primary">{transitionSec}s</span>
+                </div>
+                <input
+                  className="w-full h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary"
+                  max={2}
+                  min={0}
+                  step={0.1}
+                  type="range"
+                  disabled={!live}
+                  value={(displayPresentation?.transition_ms ?? 400) / 1000}
+                  onChange={(event) => {
+                    if (!displayPresentation) return;
+                    const ms = Math.round(Number(event.target.value) * 1000);
+                    patchPresentation({ transition_ms: ms });
+                  }}
+                />
+                <div className="flex justify-between text-[10px] text-on-surface-variant font-medium">
+                  <span>CUT</span>
+                  <span>SMOOTH</span>
+                </div>
+              </>
+            )}
           </div>
 
-          <div className="flex-1 space-y-3 overflow-y-auto custom-scrollbar min-h-0">
+          <div className="space-y-3">
             <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
               Service items
             </h4>
             <div className="space-y-2">
-              {(setlist?.items ?? []).map((item) => {
+              {(displaySetlist?.items ?? []).map((item) => {
                 const hold = bindItem(item.id);
                 return (
                 <div
                   key={item.id}
                   {...hold}
-                  className={`w-full p-3 rounded-lg bg-surface-container-high border border-white/5 flex items-center gap-3 text-left select-none touch-none ${
-                    live
-                      ? "cursor-grab active:cursor-grabbing"
-                      : "cursor-default"
-                  }`}
+                  className="w-full p-3 rounded-lg bg-surface-container-high border border-white/5 flex items-center gap-3 text-left select-none touch-none cursor-grab active:cursor-grabbing"
                 >
                   <span className="material-symbols-outlined text-on-surface-variant text-[18px] shrink-0">
                     drag_indicator
@@ -1361,7 +1738,9 @@ export default function Live() {
         }`}
       >
         <span className="text-[10px] font-bold text-primary tracking-widest uppercase">
-          Space / arrows: next · {live ? "hold and drag to reorder" : "go live to edit"}
+          {editMode && live 
+            ? "Space / Arrows: Preview · Shift + Arrows: Live Control" 
+            : `Space / arrows: next · ${live ? "hold and drag to reorder" : "go live to edit"}`}
         </span>
       </div>
     </div>

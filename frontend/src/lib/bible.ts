@@ -1,6 +1,7 @@
-import { idbGet, idbSet } from "./offline/idb";
+import { idbDel, idbDelByPrefix, idbGet, idbSet } from "./offline/idb";
+import { fetchGithubBibleChapter } from "./bibleGithub";
 
-export type FreeBibleTranslation = "kjv" | "web" | "ceb";
+export type FreeBibleTranslation = "kjv" | "niv" | "ceb";
 
 export type BibleBook = {
   name: string;
@@ -32,10 +33,25 @@ export const FREE_BIBLE_TRANSLATIONS: {
   value: FreeBibleTranslation;
   label: string;
 }[] = [
-  { value: "ceb", label: "Bisaya" },
+  { value: "ceb", label: "Visayan" },
   { value: "kjv", label: "English (KJV)" },
-  { value: "web", label: "English (WEB)" },
+  { value: "niv", label: "English (NIV)" },
 ];
+
+const BIBLE_CACHE_VERSION = 6;
+const BIBLE_CACHE_VERSION_KEY = "bible-cache-version";
+
+/** Drop stale chapter/API.Bible caches after translation source changes. */
+export async function ensureBibleCacheFresh() {
+  const current = await idbGet<number>(BIBLE_CACHE_VERSION_KEY);
+  if (current === BIBLE_CACHE_VERSION) return;
+  await idbDelByPrefix("bible-chapter:");
+  await idbDelByPrefix("github-bible-content:");
+  await idbDel("api-bible:translation-ids");
+  await idbDel("api-bible:ceb-maayong-balita-id");
+  await idbDel("api-bible:ceb-source");
+  await idbSet(BIBLE_CACHE_VERSION_KEY, BIBLE_CACHE_VERSION);
+}
 
 export const BIBLE_BOOKS: BibleBook[] = [
   { name: "Genesis", testament: "ot", chapters: 50 },
@@ -240,75 +256,6 @@ const BOOK_ALIASES: Record<string, string> = {
   bugna: "Revelation",
 };
 
-const HELLOAO_BOOK: Record<string, string> = {
-  Genesis: "GEN",
-  Exodus: "EXO",
-  Leviticus: "LEV",
-  Numbers: "NUM",
-  Deuteronomy: "DEU",
-  Joshua: "JOS",
-  Judges: "JDG",
-  Ruth: "RUT",
-  "1 Samuel": "1SA",
-  "2 Samuel": "2SA",
-  "1 Kings": "1KI",
-  "2 Kings": "2KI",
-  "1 Chronicles": "1CH",
-  "2 Chronicles": "2CH",
-  Ezra: "EZR",
-  Nehemiah: "NEH",
-  Esther: "EST",
-  Job: "JOB",
-  Psalms: "PSA",
-  Proverbs: "PRO",
-  Ecclesiastes: "ECC",
-  "Song of Solomon": "SNG",
-  Isaiah: "ISA",
-  Jeremiah: "JER",
-  Lamentations: "LAM",
-  Ezekiel: "EZK",
-  Daniel: "DAN",
-  Hosea: "HOS",
-  Joel: "JOL",
-  Amos: "AMO",
-  Obadiah: "OBA",
-  Jonah: "JON",
-  Micah: "MIC",
-  Nahum: "NAM",
-  Habakkuk: "HAB",
-  Zephaniah: "ZEP",
-  Haggai: "HAG",
-  Zechariah: "ZEC",
-  Malachi: "MAL",
-  Matthew: "MAT",
-  Mark: "MRK",
-  Luke: "LUK",
-  John: "JHN",
-  Acts: "ACT",
-  Romans: "ROM",
-  "1 Corinthians": "1CO",
-  "2 Corinthians": "2CO",
-  Galatians: "GAL",
-  Ephesians: "EPH",
-  Philippians: "PHP",
-  Colossians: "COL",
-  "1 Thessalonians": "1TH",
-  "2 Thessalonians": "2TH",
-  "1 Timothy": "1TI",
-  "2 Timothy": "2TI",
-  Titus: "TIT",
-  Philemon: "PHM",
-  Hebrews: "HEB",
-  James: "JAS",
-  "1 Peter": "1PE",
-  "2 Peter": "2PE",
-  "1 John": "1JN",
-  "2 John": "2JN",
-  "3 John": "3JN",
-  Jude: "JUD",
-  Revelation: "REV",
-};
-
 export function findBibleBook(name: string) {
   const needle = normalizeBook(name);
   const compact = needle.replace(/\s+/g, "");
@@ -413,84 +360,24 @@ function chapterCacheKey(
   return `bible-chapter:${translation}:${book}:${chapter}`;
 }
 
-function cleanVerseText(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-type BibleApiVerse = {
-  verse?: number;
-  text?: string;
-};
-
-type BibleApiChapter = {
-  verses?: BibleApiVerse[];
-};
-
-async function fetchFromBibleApi(
+async function fetchFromGithub(
   book: BibleBook,
   chapter: number,
   translation: FreeBibleTranslation,
-  signal?: AbortSignal,
 ): Promise<BibleVerse[]> {
-  const apiBook = book.apiName ?? book.name;
-  const url = `https://bible-api.com/${encodeURIComponent(`${apiBook} ${chapter}`)}?translation=${translation}`;
-  const res = await fetch(url, { signal });
-  if (!res.ok) {
-    throw new Error(`Could not load ${book.name} ${chapter}.`);
+  try {
+    return await fetchGithubBibleChapter(book.name, chapter, translation);
+  } catch (err) {
+    throw err;
   }
-  const data = (await res.json()) as BibleApiChapter;
-  const verses = (data.verses ?? [])
-    .map((row) => ({
-      verse: Number(row.verse),
-      text: cleanVerseText(String(row.text ?? "")),
-    }))
-    .filter((row) => row.verse > 0 && row.text);
-  if (!verses.length) {
-    throw new Error(`No verses found for ${book.name} ${chapter}.`);
-  }
-  return verses;
-}
-
-async function fetchFromHelloao(
-  book: BibleBook,
-  chapter: number,
-  signal?: AbortSignal,
-): Promise<BibleVerse[]> {
-  const usfm = HELLOAO_BOOK[book.name];
-  if (!usfm) throw new Error(`Could not load ${book.name} ${chapter}.`);
-  const url = `https://bible.helloao.org/api/ceb_ulb/${usfm}/${chapter}.json`;
-  const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`Could not load ${book.name} ${chapter}.`);
-  const data = (await res.json()) as {
-    chapter?: { content?: { type?: string; number?: number; content?: unknown }[] };
-  };
-  const verses: BibleVerse[] = [];
-  for (const block of data.chapter?.content ?? []) {
-    if (block.type !== "verse" || !block.number) continue;
-    const text = flattenHelloao(block.content);
-    if (!text) continue;
-    verses.push({ verse: block.number, text: cleanVerseText(text) });
-  }
-  if (!verses.length) {
-    throw new Error(`No verses found for ${book.name} ${chapter}.`);
-  }
-  return verses;
-}
-
-function flattenHelloao(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(flattenHelloao).join("");
-  if (value && typeof value === "object" && "text" in value) {
-    return String((value as { text?: string }).text ?? "");
-  }
-  return "";
 }
 
 export async function fetchBibleChapter(
   bookName: string,
   chapter: number,
   translation: FreeBibleTranslation,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
+  options?: { skipCache?: boolean },
 ): Promise<BibleChapter> {
   const book = findBibleBook(bookName);
   if (!book) throw new Error(`Unknown book: ${bookName}`);
@@ -499,20 +386,22 @@ export async function fetchBibleChapter(
   }
 
   const cacheKey = chapterCacheKey(translation, book.name, chapter);
-  const cached = await idbGet<BibleChapter>(cacheKey);
-  if (cached?.verses?.length) return cached;
+  if (!options?.skipCache) {
+    const cached = await idbGet<BibleChapter>(cacheKey);
+    if (cached?.verses?.length) return cached;
+  }
 
-  const verses =
-    translation === "ceb"
-      ? await fetchFromHelloao(book, chapter, signal)
-      : await fetchFromBibleApi(book, chapter, translation, signal);
+  const verses = await fetchFromGithub(book, chapter, translation);
+
   const next: BibleChapter = {
     book: book.name,
     chapter,
     translation,
     verses,
   };
-  await idbSet(cacheKey, next);
+  if (!options?.skipCache) {
+    await idbSet(cacheKey, next);
+  }
   return next;
 }
 
@@ -530,8 +419,15 @@ export function joinChapterText(verses: BibleVerse[]) {
   return verses.map((row) => `${row.verse} ${row.text}`).join("\n");
 }
 
+export function normalizeBibleTranslation(value: string): FreeBibleTranslation {
+  const code = value.trim().toLowerCase();
+  if (code === "web") return "niv";
+  if (isFreeBibleTranslation(code)) return code;
+  return "kjv";
+}
+
 export function isFreeBibleTranslation(
   value: string,
 ): value is FreeBibleTranslation {
-  return value === "kjv" || value === "web" || value === "ceb";
+  return value === "kjv" || value === "niv" || value === "ceb";
 }
