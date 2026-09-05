@@ -55,7 +55,7 @@ import { supabase } from "./supabase";
 import { publishPresentation, subscribeLocalPresentation } from "./offline/live";
 import { newId, nowIso } from "./offline/status";
 import { setBackupFrequency } from "./offline/sync";
-import { cachedQuery, invalidateQueries } from "./offline/queryCache";
+import { cachedQuery } from "./offline/queryCache";
 import {
   getRow,
   listRows,
@@ -1545,7 +1545,7 @@ export async function updatePresentation(
     current_slide_id: string | null;
     is_blackout: boolean;
     show_logo: boolean;
-    transition_ms: number;
+    transition_ms: number | null;
     status: string;
     ended_at: string | null;
     verse_overlay_ref: string | null;

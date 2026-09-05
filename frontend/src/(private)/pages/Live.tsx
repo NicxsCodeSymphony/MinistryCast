@@ -245,11 +245,11 @@ export default function Live() {
     if (!setlist) return null;
     return {
       ...setlist,
-      items: setlist.items.map((item) => {
+      items: (setlist.items ?? []).map((item) => {
         let sermon = item.sermon;
         if (sermon) {
           const size = pendingSermonSizes[sermon.id];
-          const slides = sermon.slides.map((slide) => {
+          const slides = (sermon.slides ?? []).map((slide) => {
             const pending = pendingSlides[slide.id];
             return pending ? { ...slide, ...pending } : slide;
           });
@@ -271,13 +271,13 @@ export default function Live() {
   const nextCue = cues[index + 1];
   const darkText = stageUsesDarkText(stageBg);
   const transitionSec = ((displayPresentation?.transition_ms ?? 400) / 1000).toFixed(1);
-  const currentItem = displaySetlist?.items?.find((row) => row.id === active?.itemId);
+  const currentItem = displaySetlist?.items?.find((row: { id: string }) => row.id === active?.itemId);
   const currentSlide = currentItem?.sermon?.slides?.find(
-    (row) => row.id === active?.slideId,
+    (row: { id: string }) => row.id === active?.slideId,
   );
   const titleSlide = Boolean(active?.titleSlide);
   const firstSlide = currentItem?.sermon?.slides?.find(
-    (row) => !isSermonSpace(row.content),
+    (row: { content: string }) => !isSermonSpace(row.content),
   );
   const sermonActive = active?.kind === "sermon" && Boolean(currentItem?.sermon_id);
   const rosterActive = active?.kind === "roster" && Boolean(currentItem?.id);
@@ -631,7 +631,7 @@ export default function Live() {
 
     window.clearTimeout(rosterSaveTimer.current);
     rosterSaveTimer.current = window.setTimeout(() => {
-      void updateSetlistItem(setlist.id, currentItem.id, {
+      void updateSetlistItem(displaySetlist.id, currentItem.id, {
         title: next.heading.trim() || "Next Week",
         subtitle: formatRosterDate(next.date),
         payload: next,
@@ -1401,7 +1401,7 @@ export default function Live() {
                   <div className="grid grid-cols-3 gap-1.5">
                     {FREE_BIBLE_TRANSLATIONS.map((item) => {
                       const activeLang =
-                        (displayPresentation.verse_overlay_translation || "ceb") === item.value;
+                        (displayPresentation?.verse_overlay_translation || "ceb") === item.value;
                       return (
                         <button
                           key={item.value}
