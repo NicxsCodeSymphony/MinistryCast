@@ -23,16 +23,47 @@ fn presentation_id(path: &str) -> String {
 fn projector_init_script(id: &str) -> String {
     let json = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into());
     format!(
-        r#"
+        r##"
         (function () {{
           try {{
             window.__MC_IS_PROJECTOR__ = true;
             window.__MC_OUTPUT__ = {json};
             sessionStorage.setItem("mc.outputPresentation", {json});
+            if ({json} && !String(location.hash || "").includes("/output")) {{
+              location.hash = "#/output?presentation=" + encodeURIComponent({json});
+            }}
           }} catch (e) {{}}
         }})();
-        "#
+        "##
     )
+}
+
+fn projector_url(id: &str) -> WebviewUrl {
+    if id.is_empty() {
+        WebviewUrl::App("index.html#/output".into())
+    } else {
+        WebviewUrl::App(
+            format!(
+                "index.html#/output?presentation={}",
+                urlencoding_lite(id)
+            )
+            .into(),
+        )
+    }
+}
+
+/// Minimal percent-encoding for presentation ids in the hash URL.
+fn urlencoding_lite(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn focus_operator(app: &tauri::AppHandle) {
@@ -99,7 +130,9 @@ fn schedule_place_projector(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn open_projector(app: tauri::AppHandle, path: String) -> Result<(), String> {
+async fn open_projector(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    // Must be async on Windows: sync WebviewWindowBuilder::build deadlocks WebView2
+    // and leaves a frozen white projector window (works on macOS WKWebView).
     let id = presentation_id(&path);
     if let Some(existing) = app.get_webview_window("projector") {
         if !id.is_empty() {
@@ -121,13 +154,13 @@ fn open_projector(app: tauri::AppHandle, path: String) -> Result<(), String> {
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(&app, "projector", WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(&app, "projector", projector_url(&id))
         .title("MinistryCast Output")
         .decorations(true)
         .resizable(true)
         .fullscreen(false)
         .always_on_top(false)
-        .visible(true)
+        .visible(false)
         .focused(false)
         .inner_size(960.0, 540.0)
         .initialization_script(&projector_init_script(&id))

@@ -51,22 +51,45 @@ function Root() {
 const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-const isProjectorWindow = Boolean(
-  (window as Window & { __MC_IS_PROJECTOR__?: boolean }).__MC_IS_PROJECTOR__,
-);
-let projectorId = "";
-if (isProjectorWindow) {
+const projectorGlobals = window as Window & {
+  __MC_IS_PROJECTOR__?: boolean;
+  __MC_OUTPUT__?: string;
+};
+
+function readProjectorId() {
   try {
-    projectorId =
-      (window as Window & { __MC_OUTPUT__?: string }).__MC_OUTPUT__ ||
+    return (
+      projectorGlobals.__MC_OUTPUT__ ||
       sessionStorage.getItem("mc.outputPresentation") ||
-      "";
+      ""
+    );
   } catch {
-    projectorId = (window as Window & { __MC_OUTPUT__?: string }).__MC_OUTPUT__ || "";
+    return projectorGlobals.__MC_OUTPUT__ || "";
   }
 }
-if (isTauri && isProjectorWindow && projectorId && !window.location.hash.includes("/output")) {
-  window.location.hash = `#/output?presentation=${encodeURIComponent(projectorId)}`;
+
+function ensureProjectorRoute(presentationId: string) {
+  if (!presentationId || window.location.hash.includes("/output")) return;
+  window.location.hash = `#/output?presentation=${encodeURIComponent(presentationId)}`;
+}
+
+const flaggedProjector = Boolean(projectorGlobals.__MC_IS_PROJECTOR__);
+let projectorId = flaggedProjector ? readProjectorId() : "";
+if (isTauri && flaggedProjector) {
+  ensureProjectorRoute(projectorId);
+}
+
+// Windows WebView2 can miss the init-script flag; recover via window label.
+if (isTauri && !flaggedProjector) {
+  void import("@tauri-apps/api/window")
+    .then(({ getCurrentWindow }) => {
+      if (getCurrentWindow().label !== "projector") return;
+      projectorGlobals.__MC_IS_PROJECTOR__ = true;
+      const id = readProjectorId();
+      if (id) projectorGlobals.__MC_OUTPUT__ = id;
+      ensureProjectorRoute(id);
+    })
+    .catch(() => undefined);
 }
 
 const routes = [
