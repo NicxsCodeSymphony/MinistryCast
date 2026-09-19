@@ -1,0 +1,21 @@
+# Root project files only — do not commit secrets or local caches
+.DS_Store
+release/
+*.dmg
+
+# Signing / private secrets (never commit)
+.secret/
+.secrets/
+*.key
+!*.key.pub
+
+# Local / generated database seed data
+backend/supabase/seed.sql
+backend/supabase/seed*.sql
+
+# pnpm local content store (use global store; never commit)
+.pnpm-store/
+
+# Keep this repo lean: only .github, backend, frontend are published
+landing/
+vercel.json

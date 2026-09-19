@@ -1,0 +1,24 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for operator and projector windows",
+  "windows": ["main", "projector"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "core:window:allow-close",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-decorations",
+    "core:window:allow-create",
+    "core:webview:allow-create-webview-window",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}
