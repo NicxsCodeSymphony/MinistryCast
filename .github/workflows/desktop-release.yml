@@ -38,16 +38,28 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
-            echo "::error::Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in repo Actions secrets. Without these the desktop app opens as a black screen."
+          # Strip accidental quotes/whitespace from GitHub secret values.
+          URL="$(printf '%s' "$VITE_SUPABASE_URL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")"
+          KEY="$(printf '%s' "$VITE_SUPABASE_ANON_KEY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")"
+
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "::error::Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in repo Actions secrets."
             exit 1
           fi
+          case "$URL" in
+            http://*|https://*) ;;
+            *)
+              echo "::error::VITE_SUPABASE_URL must be a full http(s) URL like https://xxxx.supabase.co (got length ${#URL}, no http/https prefix)."
+              exit 1
+              ;;
+          esac
+
           # Vite reads .env during `pnpm build` / tauri beforeBuildCommand.
           {
-            printf 'VITE_SUPABASE_URL=%s\n' "$VITE_SUPABASE_URL"
-            printf 'VITE_SUPABASE_ANON_KEY=%s\n' "$VITE_SUPABASE_ANON_KEY"
+            printf 'VITE_SUPABASE_URL=%s\n' "$URL"
+            printf 'VITE_SUPABASE_ANON_KEY=%s\n' "$KEY"
           } > .env
-          echo "Wrote frontend/.env for production bundle."
+          echo "Wrote frontend/.env (url_len=${#URL} key_len=${#KEY})."
 
       - name: Set release version
         id: ver

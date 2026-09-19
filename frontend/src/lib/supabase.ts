@@ -1,17 +1,38 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const url = String(import.meta.env.VITE_SUPABASE_URL ?? "").trim();
-const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY ?? "").trim();
+function cleanEnv(value: unknown) {
+  let next = String(value ?? "").trim();
+  // Secrets/UI often paste with wrapping quotes — those break supabase-js URL checks.
+  if (
+    (next.startsWith('"') && next.endsWith('"')) ||
+    (next.startsWith("'") && next.endsWith("'"))
+  ) {
+    next = next.slice(1, -1).trim();
+  }
+  return next;
+}
 
-/** True when the production build was shipped without Supabase env (causes a blank window if unhandled). */
-export const missingSupabaseEnv = !url || !anonKey;
+function isHttpUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const url = cleanEnv(import.meta.env.VITE_SUPABASE_URL);
+const anonKey = cleanEnv(import.meta.env.VITE_SUPABASE_ANON_KEY);
+
+/** True when production build is missing usable Supabase config. */
+export const missingSupabaseEnv = !url || !anonKey || !isHttpUrl(url);
 
 let client: SupabaseClient | null = null;
 
 export function getSupabase() {
   if (missingSupabaseEnv) {
     throw new Error(
-      "Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. Rebuild the desktop app with those GitHub Actions secrets set.",
+      "Invalid or missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY. Use a full https://….supabase.co URL (no quotes) in GitHub Actions secrets, then rebuild.",
     );
   }
   if (!client) {
