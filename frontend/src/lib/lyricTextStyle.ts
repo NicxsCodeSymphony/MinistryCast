@@ -10,7 +10,33 @@ export const EMPTY_LYRIC_TEXT_STYLE: LyricTextStyle = {
   underline: false,
 };
 
+/** Stage text starts bold until someone picks a style. */
+export const DEFAULT_LYRIC_TEXT_STYLE: LyricTextStyle = {
+  bold: true,
+  italic: false,
+  underline: false,
+};
+
+/** XL — the default size for lyrics, scripture and sermons on screen. */
+export const DEFAULT_STAGE_TEXT_SIZE = "xl";
+
+const NO_STYLE = "none";
+
 export function parseLyricTextStyle(raw?: string | null): LyricTextStyle {
+  if (!raw?.trim()) return { ...DEFAULT_LYRIC_TEXT_STYLE };
+  if (raw.trim().toLowerCase() === NO_STYLE) return { ...EMPTY_LYRIC_TEXT_STYLE };
+  if (raw.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<LyricTextStyle>;
+      return {
+        bold: Boolean(parsed.bold),
+        italic: Boolean(parsed.italic),
+        underline: Boolean(parsed.underline),
+      };
+    } catch {
+      /* fall through to flag list */
+    }
+  }
   const parts = new Set(
     (raw ?? "")
       .toLowerCase()
@@ -24,14 +50,17 @@ export function parseLyricTextStyle(raw?: string | null): LyricTextStyle {
   };
 }
 
+/** Empty means "use the default" (bold), so an explicit no-style choice is stored as "none". */
 export function serializeLyricTextStyle(style: LyricTextStyle) {
-  return [
-    style.bold ? "bold" : "",
-    style.italic ? "italic" : "",
-    style.underline ? "underline" : "",
-  ]
-    .filter(Boolean)
-    .join(",");
+  return (
+    [
+      style.bold ? "bold" : "",
+      style.italic ? "italic" : "",
+      style.underline ? "underline" : "",
+    ]
+      .filter(Boolean)
+      .join(",") || NO_STYLE
+  );
 }
 
 export function wrapLyricMark(

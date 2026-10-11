@@ -1,7 +1,7 @@
 import { idbDel, idbDelByPrefix, idbGet, idbSet } from "./offline/idb";
 import { fetchGithubBibleChapter } from "./bibleGithub";
 
-export type FreeBibleTranslation = "kjv" | "niv" | "ceb";
+export type FreeBibleTranslation = "kjv" | "niv" | "ceb" | "tl";
 
 export type BibleBook = {
   name: string;
@@ -34,9 +34,17 @@ export const FREE_BIBLE_TRANSLATIONS: {
   label: string;
 }[] = [
   { value: "ceb", label: "Visayan" },
+  { value: "tl", label: "Tagalog" },
   { value: "kjv", label: "English (KJV)" },
   { value: "niv", label: "English (NIV)" },
 ];
+
+export function bibleTranslationLabel(value: string | null | undefined) {
+  return (
+    FREE_BIBLE_TRANSLATIONS.find((item) => item.value === value)?.label ??
+    "English (KJV)"
+  );
+}
 
 const BIBLE_CACHE_VERSION = 6;
 const BIBLE_CACHE_VERSION_KEY = "bible-cache-version";
@@ -132,14 +140,6 @@ export const BIBLE_BOOKS: BibleBook[] = [
   { name: "Jude", testament: "nt", chapters: 1 },
   { name: "Revelation", testament: "nt", chapters: 22 },
 ];
-
-function normalizeBook(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/\./g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 const BOOK_ALIASES: Record<string, string> = {
   gen: "Genesis",
@@ -256,19 +256,150 @@ const BOOK_ALIASES: Record<string, string> = {
   bugna: "Revelation",
 };
 
-export function findBibleBook(name: string) {
-  const needle = normalizeBook(name);
-  const compact = needle.replace(/\s+/g, "");
-  const mapped = BOOK_ALIASES[compact];
-  if (mapped) {
-    return BIBLE_BOOKS.find((book) => book.name === mapped) ?? null;
+/** Cebuano (Bisaya) and Tagalog book names plus common short forms, in canonical order. */
+const LOCAL_BOOK_NAMES: Record<string, string[]> = {
+  Genesis: ["Gen", "Gn", "Henesis"],
+  Exodus: ["Exodo", "Eksodo", "Exo"],
+  Leviticus: ["Levitico", "Lebitiko", "Lv"],
+  Numbers: ["Numeros", "Mga Numero", "Bilang", "Nm"],
+  Deuteronomy: ["Deuteronomio", "Deut", "Dt"],
+  Joshua: ["Josue", "Jos", "Josh"],
+  Judges: ["Mga Maghuhukom", "Mga Hukom", "Hukom", "Maghuhukom", "Jdg", "Judg"],
+  Ruth: ["Rut"],
+  "1 Samuel": ["1 Sam", "1 Sa", "1 Samuel"],
+  "2 Samuel": ["2 Sam", "2 Sa"],
+  "1 Kings": ["1 Mga Hari", "1 Hari", "1 Kgs", "1 Ki", "1 Reyes"],
+  "2 Kings": ["2 Mga Hari", "2 Hari", "2 Kgs", "2 Ki", "2 Reyes"],
+  "1 Chronicles": ["1 Cronicas", "1 Kronikas", "1 Chr", "1 Cro"],
+  "2 Chronicles": ["2 Cronicas", "2 Kronikas", "2 Chr", "2 Cro"],
+  Ezra: ["Esdras", "Ezr"],
+  Nehemiah: ["Nehemias", "Neh"],
+  Esther: ["Ester", "Est"],
+  Job: ["Hob"],
+  Psalms: ["Mga Salmo", "Salmo", "Mga Awit", "Awit", "Sal", "Psa", "Ps"],
+  Proverbs: ["Mga Proverbio", "Proverbio", "Mga Kawikaan", "Kawikaan", "Panultihon", "Prov", "Pro"],
+  Ecclesiastes: ["Ecclesiastes", "Eclesiastes", "Ang Magwawali", "Magwawali", "Mangangaral", "Ecc", "Ecl"],
+  "Song of Solomon": [
+    "Awit sa mga Awit",
+    "Awit ng mga Awit",
+    "Awit ni Solomon",
+    "Kanta sa mga Kanta",
+    "Song of Songs",
+    "SOS",
+    "Cant",
+  ],
+  Isaiah: ["Isaias", "Isa", "Is"],
+  Jeremiah: ["Jeremias", "Jer"],
+  Lamentations: ["Mga Lamentaciones", "Lamentaciones", "Mga Pagbangotan", "Panaghoy", "Lam"],
+  Ezekiel: ["Ezequiel", "Esekiel", "Ezek", "Eze"],
+  Daniel: ["Dan", "Dn"],
+  Hosea: ["Oseas", "Hos"],
+  Joel: ["Jl"],
+  Amos: ["Am"],
+  Obadiah: ["Abdias", "Obad", "Ob"],
+  Jonah: ["Jonas", "Jon"],
+  Micah: ["Miqueas", "Mikas", "Mic"],
+  Nahum: ["Nah"],
+  Habakkuk: ["Habacuc", "Habakuk", "Hab"],
+  Zephaniah: ["Sofonias", "Zefanias", "Zeph", "Zep"],
+  Haggai: ["Hageo", "Hag"],
+  Zechariah: ["Zacarias", "Sacarias", "Zech", "Zec"],
+  Malachi: ["Malaquias", "Malakias", "Mal"],
+  Matthew: ["Mateo", "Mat", "Mt"],
+  Mark: ["Marcos", "Markos", "Mar", "Mk", "Mc"],
+  Luke: ["Lucas", "Lukas", "Luc", "Lk"],
+  John: ["Juan", "Jn", "Jhn"],
+  Acts: ["Mga Buhat", "Buhat", "Mga Gawa", "Gawa", "Acts of the Apostles", "Act", "Ac"],
+  Romans: ["Mga Taga-Roma", "Roma", "Rom", "Ro"],
+  "1 Corinthians": ["1 Mga Taga-Corinto", "1 Corinto", "1 Cor", "1 Co"],
+  "2 Corinthians": ["2 Mga Taga-Corinto", "2 Corinto", "2 Cor", "2 Co"],
+  Galatians: ["Mga Taga-Galacia", "Galacia", "Gal", "Ga"],
+  Ephesians: ["Mga Taga-Efeso", "Efeso", "Eph", "Ef"],
+  Philippians: ["Mga Taga-Filipos", "Filipos", "Filipense", "Phil", "Php", "Fil"],
+  Colossians: ["Mga Taga-Colosas", "Colosas", "Col"],
+  "1 Thessalonians": ["1 Mga Taga-Tesalonica", "1 Tesalonica", "1 Thess", "1 Th", "1 Tes"],
+  "2 Thessalonians": ["2 Mga Taga-Tesalonica", "2 Tesalonica", "2 Thess", "2 Th", "2 Tes"],
+  "1 Timothy": ["1 Timoteo", "1 Tim", "1 Ti"],
+  "2 Timothy": ["2 Timoteo", "2 Tim", "2 Ti"],
+  Titus: ["Tito", "Tit"],
+  Philemon: ["Filemon", "Phlm", "Phm"],
+  Hebrews: ["Mga Hebreohanon", "Hebreohanon", "Mga Hebreo", "Hebreo", "Heb"],
+  James: ["Santiago", "Jas", "Jm"],
+  "1 Peter": ["1 Pedro", "1 Pet", "1 Pe", "1 Ped"],
+  "2 Peter": ["2 Pedro", "2 Pet", "2 Pe", "2 Ped"],
+  "1 John": ["1 Juan", "1 Jn", "1 Jhn"],
+  "2 John": ["2 Juan", "2 Jn"],
+  "3 John": ["3 Juan", "3 Jn"],
+  Jude: ["Judas", "Jud"],
+  Revelation: ["Pinadayag", "Pahayag", "Apocalipsis", "Bugna", "Revelations", "Rev", "Rv"],
+};
+
+const ROMAN_PREFIX: [RegExp, string][] = [
+  [/^(iii|3rd|third|ikatulo|ikatlo|ikatlong)\s+/, "3 "],
+  [/^(ii|2nd|second|ikaduha|ikalawa|ikalawang)\s+/, "2 "],
+  [/^(i|1st|first|una|unang)\s+/, "1 "],
+];
+
+/** Lowercase, accent-free, no spaces/punctuation, and without filler words like "Mga" / "Taga". */
+function bookKey(value: string) {
+  let text = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[.\-–'’]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  for (const [pattern, digit] of ROMAN_PREFIX) {
+    if (pattern.test(text)) {
+      text = text.replace(pattern, digit);
+      break;
+    }
   }
-  return (
-    BIBLE_BOOKS.find((book) => {
-      if (normalizeBook(book.name) === needle) return true;
-      return (book.aliases ?? []).some((alias) => normalizeBook(alias) === needle);
-    }) ?? null
-  );
+  const match = text.match(/^([1-3])?\s*(.*)$/);
+  const number = match?.[1] ?? "";
+  const words = (match?.[2] ?? "")
+    .split(" ")
+    .filter((word) => word && !["mga", "ang", "taga", "ni", "san"].includes(word));
+  return `${number}${words.join("")}`;
+}
+
+const BOOK_INDEX: { key: string; book: string }[] = (() => {
+  const seen = new Set<string>();
+  const entries: { key: string; book: string }[] = [];
+  const add = (name: string, book: string) => {
+    const key = bookKey(name);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    entries.push({ key, book });
+  };
+  // English names first so ambiguous prefixes resolve to the familiar book.
+  for (const book of BIBLE_BOOKS) {
+    add(book.name, book.name);
+    for (const alias of book.aliases ?? []) add(alias, book.name);
+  }
+  for (const [alias, book] of Object.entries(BOOK_ALIASES)) add(alias, book);
+  for (const book of BIBLE_BOOKS) {
+    for (const alias of LOCAL_BOOK_NAMES[book.name] ?? []) add(alias, book.name);
+  }
+  return entries;
+})();
+
+const BOOK_BY_KEY = new Map(BOOK_INDEX.map((entry) => [entry.key, entry.book]));
+
+/**
+ * Find a book by English, Cebuano, or Tagalog name or short form ("Pinadayag", "Pina", "Mga Awit",
+ * "1 Cor"). Unknown text that starts at least 3 letters of a book name matches that book.
+ */
+export function findBibleBook(name: string) {
+  const key = bookKey(name);
+  if (!key) return null;
+  const exact = BOOK_BY_KEY.get(key);
+  const byName = (book: string) => BIBLE_BOOKS.find((row) => row.name === book) ?? null;
+  if (exact) return byName(exact);
+  const letters = key.replace(/^[1-3]/, "");
+  if (letters.length < 3) return null;
+  const prefix = BOOK_INDEX.find((entry) => entry.key.startsWith(key));
+  return prefix ? byName(prefix.book) : null;
 }
 
 export function formatVerseRange(verses: number[]) {
@@ -294,6 +425,7 @@ export function parseBibleReference(raw: string): ParsedBibleRef | null {
   const trimmed = raw
     .trim()
     .replace(/\s+/g, " ")
+    .replace(/([A-Za-z.])(\d)/, "$1 $2")
     .replace(/^((?:[1-3]\s*)?[A-Za-z]+)\s*:\s*(\d)/, "$1 $2");
   const match = trimmed.match(
     /^(.*?)\s+(\d+)(?::(\d+)(?:\s*[-–—]\s*(\d+))?)?$/,
@@ -429,5 +561,5 @@ export function normalizeBibleTranslation(value: string): FreeBibleTranslation {
 export function isFreeBibleTranslation(
   value: string,
 ): value is FreeBibleTranslation {
-  return value === "kjv" || value === "niv" || value === "ceb";
+  return value === "kjv" || value === "niv" || value === "ceb" || value === "tl";
 }

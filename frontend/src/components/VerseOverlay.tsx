@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { lookupScripture } from "../lib/api";
 import {
+  bibleTranslationLabel,
   type BibleVerse,
   type FreeBibleTranslation,
 } from "../lib/bible";
 import { sermonSizePx } from "../lib/helpers";
 import { DEFAULT_STAGE_FONT, stageFontFamily } from "../lib/stageFonts";
 import {
+  DEFAULT_STAGE_TEXT_SIZE,
   parseLyricTextStyle,
   type LyricTextStyle,
 } from "../lib/lyricTextStyle";
 
-const VERSE_PAGE_SIZE = 5;
+const VERSE_PAGE_SIZE = 1;
 
 type VerseOverlayProps = {
   reference: string;
@@ -33,7 +35,7 @@ export default function VerseOverlay({
   reference,
   translation = "ceb",
   font = DEFAULT_STAGE_FONT,
-  textSize = "md",
+  textSize = DEFAULT_STAGE_TEXT_SIZE,
   textStyle,
   color,
   paddingTop = 0,
@@ -57,7 +59,7 @@ export default function VerseOverlay({
   }>({});
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
-  const effectiveTextSize = textSize || internalStyles.textSize || "md";
+  const effectiveTextSize = textSize || internalStyles.textSize || DEFAULT_STAGE_TEXT_SIZE;
   const effectiveFont = font || internalStyles.font || DEFAULT_STAGE_FONT;
   const effectiveTextStyle = textStyle || internalStyles.textStyle;
   const effectiveColor = color || internalStyles.color;
@@ -65,12 +67,7 @@ export default function VerseOverlay({
   const [fontPx, setFontPx] = useState(sermonSizePx(effectiveTextSize));
   const [takeDraft, setTakeDraft] = useState(String(pageSize));
   const code = (translation || "ceb") as FreeBibleTranslation;
-  const language =
-    code === "ceb"
-      ? "Visayan"
-      : code === "niv"
-        ? "English (NIV)"
-        : "English (KJV)";
+  const language = bibleTranslationLabel(code);
   const family = stageFontFamily(effectiveFont);
   const maxPx = sermonSizePx(effectiveTextSize);
   const boxRef = useRef<HTMLDivElement>(null);

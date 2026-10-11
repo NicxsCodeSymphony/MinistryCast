@@ -8,6 +8,7 @@ const GITHUB_FILE_MAP: Record<FreeBibleTranslation, string> = {
   ceb: "Cebuano1999Bible.xml",
   kjv: "EnglishKJBible.xml",
   niv: "EnglishNIVBible.xml",
+  tl: "TagalogBible.xml",
 };
 
 /** 
@@ -21,7 +22,20 @@ type CachedBible = {
   books: Record<number, Record<number, BibleVerse[]>>;
 };
 
-async function fetchGithubBible(translation: FreeBibleTranslation): Promise<CachedBible> {
+/** One load per translation per session; parallel chapter requests share the same download. */
+const loaded = new Map<FreeBibleTranslation, Promise<CachedBible>>();
+
+function fetchGithubBible(translation: FreeBibleTranslation): Promise<CachedBible> {
+  let pending = loaded.get(translation);
+  if (!pending) {
+    pending = loadGithubBible(translation);
+    loaded.set(translation, pending);
+    pending.catch(() => loaded.delete(translation));
+  }
+  return pending;
+}
+
+async function loadGithubBible(translation: FreeBibleTranslation): Promise<CachedBible> {
   const cacheKey = `${BIBLE_ID_CACHE_PREFIX}${translation}`;
   const cached = await idbGet<CachedBible>(cacheKey);
   if (cached) return cached;

@@ -467,14 +467,27 @@ async function prepareRow(
   return row;
 }
 
+// PostgREST caps responses (1000 rows by default). mergeRemote treats the result as the
+// full server snapshot and drops synced rows that are missing, so every page must be read.
+const FETCH_PAGE_SIZE = 1000;
+
 async function fetchTable(table: TableName, churchId: string) {
-  let query = supabase.from(table).select("*");
-  if (!GLOBAL_TABLES.has(table) && !CHILD_TABLES.includes(table)) {
-    query = query.eq("church_id", churchId);
+  const scoped = !GLOBAL_TABLES.has(table) && !CHILD_TABLES.includes(table);
+  const rows: LocalRow[] = [];
+  let total = Number.POSITIVE_INFINITY;
+  while (rows.length < total) {
+    const base = supabase.from(table).select("*", { count: "exact" });
+    const filtered = scoped ? base.eq("church_id", churchId) : base;
+    const result = await filtered
+      .order("id", { ascending: true })
+      .range(rows.length, rows.length + FETCH_PAGE_SIZE - 1);
+    if (result.error) throw asError(result.error, `Could not refresh ${table}.`);
+    const page = (result.data ?? []) as LocalRow[];
+    if (!page.length) break;
+    rows.push(...page);
+    total = result.count ?? rows.length;
   }
-  const { data, error } = await query;
-  if (error) throw asError(error, `Could not refresh ${table}.`);
-  return (data ?? []) as LocalRow[];
+  return rows;
 }
 
 export async function pullRemote(churchId: string) {

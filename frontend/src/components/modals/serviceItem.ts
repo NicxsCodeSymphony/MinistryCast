@@ -1,4 +1,5 @@
 import type { RosterPayload } from "../../lib/roster";
+import type { ScripturePayload } from "../../lib/scripturePayload";
 
 export type ServiceItemKind = "song" | "sermon" | "scripture" | "media" | "roster";
 
@@ -9,7 +10,7 @@ export type ServiceItem = {
   sermonId?: string | null;
   passageId?: string | null;
   mediaAssetId?: string | null;
-  payload?: RosterPayload | null;
+  payload?: RosterPayload | ScripturePayload | null;
   title: string;
   subtitle: string;
   duration: string;

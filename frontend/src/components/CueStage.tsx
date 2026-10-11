@@ -5,8 +5,22 @@ import { renderSermonMarkup } from "../lib/sermonMarkup";
 import { DEFAULT_STAGE_FONT, stageFontFamily } from "../lib/stageFonts";
 import type { LiveCue } from "../lib/types";
 import type { LyricTextStyle } from "../lib/lyricTextStyle";
-import { EMPTY_LYRIC_TEXT_STYLE } from "../lib/lyricTextStyle";
-import { splitChordProLine } from "../lib/chords";
+import {
+  DEFAULT_LYRIC_TEXT_STYLE,
+  DEFAULT_STAGE_TEXT_SIZE,
+  EMPTY_LYRIC_TEXT_STYLE,
+  parseLyricTextStyle,
+} from "../lib/lyricTextStyle";
+import {
+  chordStacks,
+  chordStackMinWidth,
+  isChordSymbol,
+  spellChord,
+  transposeChordSymbol,
+  type Accidentals,
+  type ChordStack,
+} from "../lib/chords";
+import { transposeFor, type ChordDisplay } from "../lib/chordDisplay";
 import RosterStage from "./RosterStage";
 
 type CueStageProps = {
@@ -17,6 +31,8 @@ type CueStageProps = {
   lyricSize?: string | null;
   darkText?: boolean;
   lyricStyle?: LyricTextStyle;
+  /** Omitted: chords show in the default style. */
+  chords?: ChordDisplay | null;
   onVerseClick?: (raw: string, parsed: ParsedBibleRef) => void;
 };
 
@@ -42,16 +58,30 @@ function LyricCueStage({
   className = "",
   paddingTop = 0,
   font = DEFAULT_STAGE_FONT,
-  lyricSize = "48",
+  lyricSize = DEFAULT_STAGE_TEXT_SIZE,
   darkText = false,
-  lyricStyle = EMPTY_LYRIC_TEXT_STYLE,
+  lyricStyle = DEFAULT_LYRIC_TEXT_STYLE,
+  chords,
   onVerseClick,
 }: CueStageProps) {
   const sermon = cue?.kind === "sermon";
   const heading = cue?.heading?.trim() || "";
   const sectionLabel = cue?.sectionLabel?.trim() || "";
   const verse = cue?.verse?.trim() || "";
-  const rawLines = cue?.lines ?? [];
+  const showChords = chords?.show ?? true;
+  const cueLines = cue?.lines;
+  const rawLines = useMemo(
+    () =>
+      cue?.kind === "lyric" && !showChords
+        ? (cueLines ?? []).map(withoutChords)
+        : (cueLines ?? []),
+    [cue?.kind, cueLines, showChords],
+  );
+  const chordSteps = transposeFor(chords, cue?.itemId);
+  const accidentals = chords?.accidentals ?? "auto";
+  const chordScale = (chords?.size ?? 55) / 100;
+  const chordColor =
+    chords?.color && chords.color !== "auto" ? chords.color : undefined;
   const blank = Boolean(cue?.blank);
   const scriptureOnly =
     cue?.kind === "scripture" && !rawLines.length && Boolean(heading);
@@ -65,15 +95,31 @@ function LyricCueStage({
   const footerVerse = cue?.versePlacement === "bottom" ? verse : "";
   const boxRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  const scripture = cue?.kind === "scripture";
   const maxPx = titleSlide
     ? 80
     : sermon
       ? sermonSizePx(cue?.textSize)
       : cue?.kind === "lyric"
         ? sermonSizePx(lyricSize)
-        : 64;
+        : scripture
+          ? sermonSizePx(cue?.textSize || DEFAULT_STAGE_TEXT_SIZE)
+          : 64;
   const [fontPx, setFontPx] = useState(maxPx);
-  const bodyFamily = stageFontFamily(cue?.kind === "lyric" ? font : DEFAULT_STAGE_FONT);
+  const bodyFamily = stageFontFamily(
+    cue?.kind === "lyric" ? font : scripture ? cue?.font || DEFAULT_STAGE_FONT : DEFAULT_STAGE_FONT,
+  );
+  const scriptureStyleRaw = scripture ? cue?.textStyle : null;
+  const bodyStyle = useMemo(
+    () =>
+      cue?.kind === "lyric"
+        ? lyricStyle
+        : scripture
+          ? parseLyricTextStyle(scriptureStyleRaw)
+          : EMPTY_LYRIC_TEXT_STYLE,
+    [cue?.kind, lyricStyle, scripture, scriptureStyleRaw],
+  );
+  const bodyColor = scripture ? scriptureColor(cue?.color) : undefined;
   const metaFamily = stageFontFamily(DEFAULT_STAGE_FONT);
   const startAlign = sermon && cue?.align !== "center" && !titleSlide;
 
@@ -112,7 +158,21 @@ function LyricCueStage({
     const observer = new ResizeObserver(fit);
     observer.observe(box);
     return () => observer.disconnect();
-  }, [blank, bodyLines.length, cue?.id, cue?.kind, cue?.textSize, lineKey, lyricStyle, maxPx, sermon]);
+  }, [
+    blank,
+    bodyLines.length,
+    accidentals,
+    chordScale,
+    chordSteps,
+    cue?.id,
+    cue?.kind,
+    cue?.textSize,
+    bodyFamily,
+    bodyStyle,
+    lineKey,
+    maxPx,
+    sermon,
+  ]);
 
   const verseSize = Math.max(16, Math.round(fontPx * (titleSlide ? 0.32 : 0.42)));
 
@@ -188,12 +248,10 @@ function LyricCueStage({
                 style={{
                   fontSize: `${fontPx}px`,
                   fontFamily: bodyFamily,
-                  fontWeight: cue?.kind === "lyric" && lyricStyle.bold ? 700 : undefined,
-                  fontStyle: cue?.kind === "lyric" && lyricStyle.italic ? "italic" : undefined,
-                  textDecoration:
-                    cue?.kind === "lyric" && lyricStyle.underline
-                      ? "underline"
-                      : undefined,
+                  fontWeight: bodyStyle.bold ? 700 : undefined,
+                  fontStyle: bodyStyle.italic ? "italic" : undefined,
+                  textDecoration: bodyStyle.underline ? "underline" : undefined,
+                  color: bodyColor,
                 }}
               >
                 {bodyLines.map((line, index) =>
@@ -206,6 +264,10 @@ function LyricCueStage({
                         <ChordProLine
                           line={line}
                           darkText={Boolean(darkText)}
+                          color={chordColor}
+                          scale={chordScale}
+                          steps={chordSteps}
+                          accidentals={accidentals}
                           onVerseClick={onVerseClick}
                         />
                       ) : (
@@ -249,48 +311,101 @@ function LyricCueStage({
   );
 }
 
+/** White is the Add Scripture default; treat it as "follow the stage" so it stays readable on light backgrounds. */
+function scriptureColor(raw?: string | null) {
+  const value = raw?.trim();
+  if (!value || value === "auto" || /^#?f{3}(?:f{3})?$/i.test(value)) return undefined;
+  return value;
+}
+
+/** Drop chord markers but keep other bracketed text, e.g. `[G]Walk on` → `Walk on`. */
+function withoutChords(line: string) {
+  if (!line.includes("[")) return line;
+  return line
+    .replace(/\[([^\]]*)\]/g, (full, inner: string) =>
+      !inner.trim() || isChordSymbol(inner) ? "" : full,
+    )
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Split chord stacks into whole words so a line can only wrap between words; a chord placed
+ * mid-word stays over its letter instead of the word breaking apart at the chord.
+ */
+function chordWords(line: string, steps: number, accidentals: Accidentals) {
+  const words: ChordStack[][] = [];
+  let current: ChordStack[] = [];
+  for (const stack of chordStacks(line)) {
+    const chord = stack.chord
+      ? spellChord(transposeChordSymbol(stack.chord.trim(), steps), accidentals)
+      : "";
+    const parts = stack.text.match(/\S*\s*/g)?.filter(Boolean) ?? [];
+    if (!parts.length) parts.push("");
+    parts.forEach((part, index) => {
+      current.push({ chord: index === 0 ? chord : "", text: part });
+      if (/\s$/.test(part)) {
+        words.push(current);
+        current = [];
+      }
+    });
+  }
+  if (current.length) words.push(current);
+  return words;
+}
+
 function ChordProLine({
   line,
   darkText,
+  color,
+  scale,
+  steps,
+  accidentals,
   onVerseClick,
 }: {
   line: string;
   darkText: boolean;
+  color?: string;
+  scale: number;
+  steps: number;
+  accidentals: Accidentals;
   onVerseClick?: (raw: string, parsed: ParsedBibleRef) => void;
 }) {
-  const parts = splitChordProLine(line);
-  const chordColor = darkText ? "text-primary" : "text-amber-200";
-  const stacks: { chord: string; text: string }[] = [];
-  let pendingChord = "";
-  for (const part of parts) {
-    if (part.type === "chord") {
-      if (pendingChord) stacks.push({ chord: pendingChord, text: "" });
-      pendingChord = part.value;
-      continue;
-    }
-    stacks.push({ chord: pendingChord, text: part.value });
-    pendingChord = "";
-  }
-  if (pendingChord) stacks.push({ chord: pendingChord, text: "" });
+  const chordClass = color ? "" : darkText ? "text-primary" : "text-amber-200";
+  const words = chordWords(line, steps, accidentals);
 
   return (
-    <span className="inline-flex flex-wrap items-end leading-none">
-      {stacks.map((stack, index) => (
-        <span
-          key={`s-${index}-${stack.chord}-${stack.text.slice(0, 8)}`}
-          className="inline-flex flex-col items-start"
-        >
-          <span
-            className={`min-h-[0.85em] font-semibold tracking-wide ${chordColor}`}
-            style={{ fontSize: "0.55em" }}
-          >
-            {stack.chord || "\u00a0"}
-          </span>
-          <span className="leading-[1.22] whitespace-pre-wrap">
-            {stack.text
-              ? renderSermonMarkup(stack.text, onVerseClick, false, darkText)
-              : "\u00a0"}
-          </span>
+    <span
+      className="inline-flex flex-wrap items-end justify-center leading-none"
+      style={{ rowGap: "0.22em", paddingTop: "0.15em" }}
+    >
+      {words.map((word, wordIndex) => (
+        <span key={`w-${wordIndex}`} className="inline-flex items-end whitespace-nowrap">
+          {word.map((stack, index) => (
+            <span
+              key={`s-${index}-${stack.chord}`}
+              className="inline-flex flex-col items-start"
+              style={{ minWidth: chordStackMinWidth(stack, scale) }}
+            >
+              <span
+                className={`w-0 overflow-visible whitespace-nowrap font-semibold tracking-wide ${chordClass}`}
+                style={{
+                  fontSize: `${scale}em`,
+                  lineHeight: 1,
+                  height: "0.95em",
+                  marginBottom: "-0.05em",
+                  color,
+                }}
+              >
+                {stack.chord || "\u00a0"}
+              </span>
+              <span className="leading-[1.05] whitespace-pre">
+                {stack.text
+                  ? renderSermonMarkup(stack.text, onVerseClick, false, darkText)
+                  : "\u00a0"}
+              </span>
+            </span>
+          ))}
         </span>
       ))}
     </span>

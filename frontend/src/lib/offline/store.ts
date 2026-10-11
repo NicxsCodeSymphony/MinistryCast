@@ -69,6 +69,8 @@ export async function withContentBatch<T>(fn: () => Promise<T>) {
 export type LocalRow = Record<string, unknown> & {
   id: string;
   __localOnly?: boolean;
+  /** Outbox-only: row has never reached the server, so a delete can just drop the upsert. */
+  __new?: boolean;
 };
 
 export type OutboxOp =
@@ -97,6 +99,21 @@ export type ChurchMeta = {
 };
 
 type Collection = Record<string, LocalRow>;
+
+// IndexedDB has no cross-key transactions here, so every read-modify-write of a
+// church's collections/outbox must be serialized or concurrent writers clobber each other.
+const writeLocks = new Map<string, Promise<unknown>>();
+
+function withWriteLock<T>(churchId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = writeLocks.get(churchId) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(fn);
+  const tail = run.catch(() => undefined);
+  writeLocks.set(churchId, tail);
+  void tail.then(() => {
+    if (writeLocks.get(churchId) === tail) writeLocks.delete(churchId);
+  });
+  return run;
+}
 
 function colKey(churchId: string, table: TableName) {
   return `col:${churchId}:${table}`;
@@ -224,7 +241,7 @@ function dropChildOps(next: OutboxItem[], parentTable: TableName, parentId: stri
 
 export function compactOutbox(items: OutboxItem[]) {
   const next: OutboxItem[] = [];
-  for (const item of items) {
+  for (let item of items) {
     const { op } = item;
     if (op.type === "replaceChildren") {
       const idx = next.findIndex(
@@ -244,7 +261,13 @@ export function compactOutbox(items: OutboxItem[]) {
           row.op.table === op.table &&
           row.op.row.id === op.row.id,
       );
-      if (upsertIdx >= 0) next.splice(upsertIdx, 1);
+      if (upsertIdx >= 0) {
+        const earlier = next[upsertIdx].op;
+        if (earlier.type === "upsert" && earlier.row.__new) {
+          item = { ...item, op: { ...op, row: { ...op.row, __new: true } } };
+        }
+        next.splice(upsertIdx, 1);
+      }
       const deleteIdx = next.findIndex(
         (row) =>
           row.op.type === "delete" &&
@@ -264,7 +287,7 @@ export function compactOutbox(items: OutboxItem[]) {
     const wasLocal = Boolean(
       upsertIdx >= 0 &&
         next[upsertIdx].op.type === "upsert" &&
-        next[upsertIdx].op.row.__localOnly,
+        next[upsertIdx].op.row.__new,
     );
     if (upsertIdx >= 0) next.splice(upsertIdx, 1);
     dropChildOps(next, op.table, op.rowId);
@@ -300,7 +323,7 @@ async function cascadeLocalChildren(
   }
 }
 
-export async function enqueue(
+async function enqueueUnlocked(
   churchId: string,
   op: OutboxOp,
   previous?: LocalRow | LocalRow[] | null,
@@ -325,16 +348,29 @@ export async function enqueue(
   );
 }
 
-export async function replaceOutbox(churchId: string, items: OutboxItem[]) {
-  await saveOutbox(churchId, items);
+export function enqueue(
+  churchId: string,
+  op: OutboxOp,
+  previous?: LocalRow | LocalRow[] | null,
+  extra?: { parentTitle?: string },
+) {
+  return withWriteLock(churchId, () =>
+    enqueueUnlocked(churchId, op, previous, extra),
+  );
 }
 
-export async function dequeueOutboxItem(churchId: string, itemId: string) {
-  const items = await getOutbox(churchId);
-  await saveOutbox(
-    churchId,
-    items.filter((item) => item.id !== itemId),
-  );
+export function replaceOutbox(churchId: string, items: OutboxItem[]) {
+  return withWriteLock(churchId, () => saveOutbox(churchId, items));
+}
+
+export function dequeueOutboxItem(churchId: string, itemId: string) {
+  return withWriteLock(churchId, async () => {
+    const items = await getOutbox(churchId);
+    await saveOutbox(
+      churchId,
+      items.filter((item) => item.id !== itemId),
+    );
+  });
 }
 
 export const PUSH_ORDER: TableName[] = [
@@ -381,85 +417,108 @@ export async function requeueLocalOnly(churchId: string) {
   }
 }
 
-export async function putRow(
+export function putRow(
   churchId: string,
   table: TableName,
   row: LocalRow,
   options?: { localOnly?: boolean; enqueue?: boolean },
 ) {
-  const collection = await getCollection(churchId, table);
-  const queued = options?.enqueue !== false;
-  const previous = collection[row.id] ?? null;
-  const next: LocalRow = {
-    ...row,
-    __localOnly: queued ? true : (options?.localOnly ?? row.__localOnly ?? false),
-  };
-  collection[row.id] = next;
-  await setCollection(churchId, table, collection);
-  notifyContent(table);
-  if (queued) {
-    await enqueue(churchId, { type: "upsert", table, row: next }, previous);
-  }
-  return next;
+  return withWriteLock(churchId, async () => {
+    const collection = await getCollection(churchId, table);
+    const queued = options?.enqueue !== false;
+    const previous = collection[row.id] ?? null;
+    const next: LocalRow = {
+      ...row,
+      __localOnly: queued ? true : (options?.localOnly ?? row.__localOnly ?? false),
+    };
+    delete next.__new;
+    collection[row.id] = next;
+    await setCollection(churchId, table, collection);
+    notifyContent(table);
+    if (queued) {
+      await enqueueUnlocked(
+        churchId,
+        { type: "upsert", table, row: previous ? next : { ...next, __new: true } },
+        previous,
+      );
+    }
+    return next;
+  });
 }
 
-export async function removeRow(
+export function removeRow(
   churchId: string,
   table: TableName,
   id: string,
   options?: { enqueue?: boolean },
 ) {
-  const collection = await getCollection(churchId, table);
-  const existing = collection[id];
-  delete collection[id];
-  await setCollection(churchId, table, collection);
-  await cascadeLocalChildren(churchId, table, id);
-  notifyContent(table);
-  if (options?.enqueue !== false) {
-    await enqueue(churchId, { type: "delete", table, rowId: id }, existing ?? null);
-  }
-  return existing ?? null;
+  return withWriteLock(churchId, async () => {
+    const collection = await getCollection(churchId, table);
+    const existing = collection[id];
+    delete collection[id];
+    await setCollection(churchId, table, collection);
+    await cascadeLocalChildren(churchId, table, id);
+    notifyContent(table);
+    if (options?.enqueue !== false) {
+      await enqueueUnlocked(
+        churchId,
+        { type: "delete", table, rowId: id },
+        existing ?? null,
+      );
+    }
+    return existing ?? null;
+  });
 }
 
-export async function replaceChildren(
+export function replaceChildren(
   churchId: string,
   table: TableName,
   parentColumn: string,
   parentId: string,
   rows: LocalRow[],
 ) {
-  const collection = await getCollection(churchId, table);
-  const previousRows = Object.values(collection).filter(
-    (row) => row[parentColumn] === parentId,
-  );
-  for (const [id, row] of Object.entries(collection)) {
-    if (row[parentColumn] === parentId) delete collection[id];
-  }
-  for (const row of rows) collection[row.id] = { ...row, __localOnly: true };
-  await setCollection(churchId, table, collection);
-  notifyContent(table);
-  const parentLink = CHILD_TABLES.find((row) => row.table === table);
-  const parent = parentLink
-    ? await getRow(churchId, parentLink.parent, parentId)
-    : null;
-  const parentTitle = parent
-    ? String(parent.title ?? parent.name ?? "").trim()
-    : "";
-  await enqueue(
-    churchId,
-    {
-      type: "replaceChildren",
-      table,
-      parentColumn,
-      parentId,
-      rows,
-    },
-    previousRows,
-    { parentTitle },
-  );
+  return withWriteLock(churchId, async () => {
+    const collection = await getCollection(churchId, table);
+    const previousRows = Object.values(collection).filter(
+      (row) => row[parentColumn] === parentId,
+    );
+    for (const [id, row] of Object.entries(collection)) {
+      if (row[parentColumn] === parentId) delete collection[id];
+    }
+    for (const row of rows) collection[row.id] = { ...row, __localOnly: true };
+    await setCollection(churchId, table, collection);
+    notifyContent(table);
+    const parentLink = CHILD_TABLES.find((row) => row.table === table);
+    const parent = parentLink
+      ? await getRow(churchId, parentLink.parent, parentId)
+      : null;
+    const parentTitle = parent
+      ? String(parent.title ?? parent.name ?? "").trim()
+      : "";
+    await enqueueUnlocked(
+      churchId,
+      {
+        type: "replaceChildren",
+        table,
+        parentColumn,
+        parentId,
+        rows,
+      },
+      previousRows,
+      { parentTitle },
+    );
+  });
 }
 
-export async function mergeRemote(
+export function mergeRemote(
+  churchId: string,
+  table: TableName,
+  rows: LocalRow[],
+) {
+  return withWriteLock(churchId, () => mergeRemoteUnlocked(churchId, table, rows));
+}
+
+async function mergeRemoteUnlocked(
   churchId: string,
   table: TableName,
   rows: LocalRow[],
@@ -495,15 +554,32 @@ export async function mergeRemote(
   notifyContent(table);
 }
 
-export async function markPushed(churchId: string, table: TableName, id: string) {
-  const collection = await getCollection(churchId, table);
-  if (!collection[id]) return;
-  collection[id] = { ...collection[id], __localOnly: false };
-  await setCollection(churchId, table, collection);
+export function markPushed(churchId: string, table: TableName, id: string) {
+  return withWriteLock(churchId, async () => {
+    const items = await getOutbox(churchId);
+    let outboxChanged = false;
+    const nextItems = items.map((item) => {
+      const { op } = item;
+      if (op.type !== "upsert" || op.table !== table || op.row.id !== id || !op.row.__new) {
+        return item;
+      }
+      outboxChanged = true;
+      const row = { ...op.row };
+      delete row.__new;
+      return { ...item, op: { ...op, row } };
+    });
+    if (outboxChanged) await saveOutbox(churchId, nextItems);
+
+    const collection = await getCollection(churchId, table);
+    if (!collection[id]) return;
+    collection[id] = { ...collection[id], __localOnly: false };
+    await setCollection(churchId, table, collection);
+  });
 }
 
 export function stripLocal<T extends LocalRow>(row: T) {
   const copy = { ...row };
   delete copy.__localOnly;
+  delete copy.__new;
   return copy as T;
 }

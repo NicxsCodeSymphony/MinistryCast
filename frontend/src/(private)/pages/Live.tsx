@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import CueStage from "../../components/CueStage";
-import PointEditor from "../../components/PointEditor";
+import LiveEditWorkspace from "../../components/LiveEditWorkspace";
 import StageBackdrop from "../../components/StageBackdrop";
 import StageBackgroundPicker from "../../components/StageBackgroundPicker";
 import VerseOverlay from "../../components/VerseOverlay";
@@ -11,13 +11,11 @@ import TextStylePicker from "../../components/TextStylePicker";
 import {
   buildCues,
   cueIndexFor,
-  deleteSermonSlide,
   endPresentation,
   getActivePresentation,
   getChurchSettings,
   getPresentation,
   getSetlist,
-  insertSermonSlide,
   listSetlists,
   patchChurchSettings,
   patchFromCue,
@@ -26,11 +24,15 @@ import {
   startPresentation,
   subscribePresentation,
   updatePresentation,
-  updateSermonSlide,
-  updateSermonTextSize,
+  updateScripturePassage,
   updateSetlistItem,
 } from "../../lib/api";
-import { insertSermonGap, isSermonSpace, isTypingTarget, moveItem } from "../../lib/helpers";
+import {
+  isSermonSpace,
+  isTypingTarget,
+  moveItem,
+} from "../../lib/helpers";
+import { sermonPlainText } from "../../lib/sermonMarkup";
 import {
   formatBibleReference,
   FREE_BIBLE_TRANSLATIONS,
@@ -56,11 +58,16 @@ import {
   type StageBackgroundId,
 } from "../../lib/stageBackgrounds";
 import {
+  DEFAULT_LYRIC_TEXT_STYLE,
+  DEFAULT_STAGE_TEXT_SIZE,
   parseLyricTextStyle,
   serializeLyricTextStyle,
   type LyricTextStyle,
 } from "../../lib/lyricTextStyle";
 import { asStageTransition, lyricTransitionClass, type StageTransition } from "../../lib/stageTransition";
+import { readChordDisplay, saveChordDisplay, type ChordDisplay } from "../../lib/chordDisplay";
+import ChordControls from "../../components/ChordControls";
+import ScriptureStyleControls from "../../components/ScriptureStyleControls";
 import { usePrefs } from "../../lib/PrefsContext";
 import { useToast } from "../../lib/ToastContext";
 import type { LiveCue, Presentation, Setlist } from "../../lib/types";
@@ -82,29 +89,41 @@ export default function Live() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [pointDraft, setPointDraft] = useState("");
-  const [verseDraft, setVerseDraft] = useState("");
-  const [pointEditorActive, setPointEditorActive] = useState(false);
-  const [pointSync, setPointSync] = useState(0);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
-  const [lyricSize, setLyricSize] = useState("48");
-  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>({
-    bold: false,
-    italic: false,
-    underline: false,
-  });
+  const [lyricSize, setLyricSize] = useState(DEFAULT_STAGE_TEXT_SIZE);
+  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>(DEFAULT_LYRIC_TEXT_STYLE);
   const [stageBg, setStageBg] = useState<StageBackgroundId>(DEFAULT_STAGE_BACKGROUND);
   const [transitionStyle, setTransitionStyle] = useState<StageTransition>("dissolve");
+  const [chords, setChords] = useState<ChordDisplay>(readChordDisplay);
+  const updateChords = (patch: Partial<ChordDisplay>) => {
+    setChords((prev) => {
+      const next = { ...prev, ...patch };
+      saveChordDisplay(next);
+      return next;
+    });
+  };
   const [rosterDraft, setRosterDraft] = useState<RosterPayload | null>(null);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [editMode, setEditMode] = useState(false);
-  const [pendingPresentation, setPendingPresentation] = useState<Partial<Presentation>>({});
-  const [pendingSettings, setPendingSettings] = useState<any>({});
-  const [pendingSlides, setPendingSlides] = useState<Record<string, any>>({});
-  const [pendingSermonSizes, setPendingSermonSizes] = useState<Record<string, string>>({});
-  const [pendingRosters, setPendingRosters] = useState<Record<string, any>>({});
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
-  const slideSaveTimer = useRef(0);
+  const [hiddenDecks, setHiddenDecks] = useState<{ left: boolean; right: boolean }>(() => {
+    try {
+      return { left: false, right: false, ...JSON.parse(localStorage.getItem("mc.liveDecks") || "{}") };
+    } catch {
+      return { left: false, right: false };
+    }
+  });
+  const toggleDeck = (side: "left" | "right") => {
+    setHiddenDecks((prev) => {
+      const next = { ...prev, [side]: !prev[side] };
+      try {
+        localStorage.setItem("mc.liveDecks", JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
   const rosterSaveTimer = useRef(0);
   const setlistFp = useRef("");
 
@@ -172,7 +191,7 @@ export default function Live() {
     try {
       const settings = await getChurchSettings();
       setFont(asStageFont(settings?.default_font));
-      setLyricSize(settings?.lyrics_text_size || "48");
+      setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
       setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
       setStageBg(asStageBackground(settings?.stage_background));
       setTransitionStyle(asStageTransition(settings?.default_transition));
@@ -205,14 +224,8 @@ export default function Live() {
 
   useEffect(() => {
     if (!presentation?.id) return;
-    return subscribePresentation(presentation.id, (next) => {
-      if (editMode && Object.keys(pendingPresentation).length > 0) {
-        setPresentation({ ...next, ...pendingPresentation });
-      } else {
-        setPresentation(next);
-      }
-    });
-  }, [presentation?.id, editMode, pendingPresentation]);
+    return subscribePresentation(presentation.id, setPresentation);
+  }, [presentation?.id]);
 
   useEffect(() => {
     if (!setlistId) return;
@@ -221,7 +234,7 @@ export default function Live() {
       void getChurchSettings({ fresh: true })
         .then((settings) => {
           setFont(asStageFont(settings?.default_font));
-          setLyricSize(settings?.lyrics_text_size || "48");
+          setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
           setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
           setStageBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
@@ -246,6 +259,7 @@ export default function Live() {
       lyricStyle,
       stageBg,
       transitionStyle,
+      chords,
       at: Date.now(),
     });
   }, [
@@ -256,6 +270,7 @@ export default function Live() {
     lyricStyle,
     stageBg,
     transitionStyle,
+    chords,
   ]);
 
   useEffect(() => {
@@ -271,39 +286,24 @@ export default function Live() {
     return () => window.clearInterval(id);
   }, [presentation?.started_at, presentation?.status]);
 
-  const displayPresentation = useMemo(() => {
-    if (!presentation) return null;
-    return { ...presentation, ...pendingPresentation };
-  }, [presentation, pendingPresentation]);
-
-  const displaySetlist = useMemo(() => {
-    if (!setlist) return null;
-    return {
-      ...setlist,
-      items: (setlist.items ?? []).map((item) => {
-        let sermon = item.sermon;
-        if (sermon) {
-          const size = pendingSermonSizes[sermon.id];
-          const slides = (sermon.slides ?? []).map((slide) => {
-            const pending = pendingSlides[slide.id];
-            return pending ? { ...slide, ...pending } : slide;
-          });
-          sermon = { ...sermon, text_size: size ?? sermon.text_size, slides };
-        }
-        const pendingRoster = pendingRosters[item.id];
-        return pendingRoster
-          ? { ...item, ...pendingRoster, sermon }
-          : { ...item, sermon };
-      }),
-    };
-  }, [setlist, pendingSlides, pendingSermonSizes, pendingRosters]);
+  const displayPresentation = presentation;
+  const displaySetlist = setlist;
 
   const cues = useMemo(() => (displaySetlist ? buildCues(displaySetlist) : []), [displaySetlist]);
   const live = displayPresentation?.status === "live";
   const liveIndex = displayPresentation ? cueIndexFor(displayPresentation, cues) : 0;
-  const index = live && !editMode ? liveIndex : previewIndex;
+  const index = live ? liveIndex : previewIndex;
   const active: LiveCue | undefined = cues[index];
   const nextCue = cues[index + 1];
+  const cueListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const list = cueListRef.current;
+    const row = list?.querySelector<HTMLElement>(`[data-cue-index="${index}"]`);
+    if (!list || !row || !list.clientHeight) return;
+    const top = row.offsetTop - (list.clientHeight - row.offsetHeight) / 2;
+    list.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+  }, [index, active?.id, cues.length]);
   const darkText = stageUsesDarkText(stageBg);
   const transitionSec = ((displayPresentation?.transition_ms ?? 400) / 1000).toFixed(1);
   const currentItem = displaySetlist?.items?.find((row: { id: string }) => row.id === active?.itemId);
@@ -311,81 +311,33 @@ export default function Live() {
     (row: { id: string }) => row.id === active?.slideId,
   );
   const titleSlide = Boolean(active?.titleSlide);
-  const firstSlide = currentItem?.sermon?.slides?.find(
-    (row: { content: string }) => !isSermonSpace(row.content),
+  const activeHasChords = useMemo(
+    () =>
+      Boolean(active?.itemId) &&
+      cues.some(
+        (cue) =>
+          cue.itemId === active?.itemId &&
+          (cue.lines ?? []).some((line) => /\[[^\]]+\]/.test(line)),
+      ),
+    [active?.itemId, cues],
   );
   const sermonActive = active?.kind === "sermon" && Boolean(currentItem?.sermon_id);
   const rosterActive = active?.kind === "roster" && Boolean(currentItem?.id);
-
-  const hasPending =
-    Object.keys(pendingPresentation).length > 0 ||
-    Object.keys(pendingSettings).length > 0 ||
-    Object.keys(pendingSlides).length > 0 ||
-    Object.keys(pendingSermonSizes).length > 0 ||
-    Object.keys(pendingRosters).length > 0;
 
   const refreshSetlist = useCallback(() => {
     if (!setlistId) return Promise.resolve();
     return getSetlist(setlistId, { fresh: true }).then(applySetlist);
   }, [setlistId, applySetlist]);
 
-  const applyChanges = useCallback(async () => {
-    if (!presentation) return;
-    setBusy(true);
-    try {
-      if (Object.keys(pendingPresentation).length > 0) {
-        await updatePresentation(presentation.id, pendingPresentation).then(setPresentation);
-      }
-      if (Object.keys(pendingSettings).length > 0) {
-        await patchChurchSettings(pendingSettings);
-      }
-      for (const [id, patch] of Object.entries(pendingSlides)) {
-        await updateSermonSlide(id, patch);
-      }
-      for (const [id, size] of Object.entries(pendingSermonSizes)) {
-        await updateSermonTextSize(id, size);
-      }
-      for (const [itemId, patch] of Object.entries(pendingRosters)) {
-        if (!setlist) continue;
-        await updateSetlistItem(setlist.id, itemId, patch);
-      }
-      await refreshSetlist();
-      setPendingPresentation({});
-      setPendingSettings({});
-      setPendingSlides({});
-      setPendingSermonSizes({});
-      setPendingRosters({});
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to apply changes.";
-      setError(message);
-      toast.error(message);
-      throw err;
-    } finally {
-      setBusy(false);
-    }
-  }, [
-    presentation,
-    setlist,
-    pendingPresentation,
-    pendingSettings,
-    pendingSlides,
-    pendingSermonSizes,
-    pendingRosters,
-    refreshSetlist,
-    toast,
-  ]);
-
-  const toggleEditMode = async () => {
-    if (editMode) {
-      if (hasPending) {
-        await applyChanges();
-      }
-      setEditMode(false);
-      setPreviewIndex(liveIndex);
-    } else {
-      setEditMode(true);
-    }
+  const currentPassage =
+    currentItem?.item_type === "scripture" ? currentItem.passage ?? null : null;
+  const patchScriptureStyle = (
+    patch: Parameters<typeof updateScripturePassage>[1],
+  ) => {
+    if (!currentPassage) return;
+    void updateScripturePassage(currentPassage.id, patch)
+      .then(() => refreshSetlist())
+      .catch(() => toast.error("Could not update the scripture style."));
   };
 
   const toggleSection = (id: string) => {
@@ -395,30 +347,22 @@ export default function Live() {
   const patchPresentation = useCallback(
     (patch: Partial<Presentation>) => {
       if (!presentation) return;
-      if (editMode) {
-        setPendingPresentation((prev) => ({ ...prev, ...patch }));
-        return;
-      }
       void updatePresentation(presentation.id, patch).then(setPresentation);
     },
-    [presentation, editMode],
+    [presentation],
   );
 
   const patchSettings = useCallback(
     (patch: any) => {
-      if (editMode) {
-        setPendingSettings((prev: any) => ({ ...prev, ...patch }));
-        if (patch.stage_background) setStageBg(asStageBackground(patch.stage_background));
-        if (patch.default_font) setFont(asStageFont(patch.default_font));
-        if (patch.lyrics_text_size) setLyricSize(patch.lyrics_text_size);
-        if (patch.lyrics_text_style) setLyricStyle(parseLyricTextStyle(patch.lyrics_text_style));
-        return;
-      }
+      if (patch.stage_background) setStageBg(asStageBackground(patch.stage_background));
+      if (patch.default_font) setFont(asStageFont(patch.default_font));
+      if (patch.lyrics_text_size) setLyricSize(patch.lyrics_text_size);
+      if (patch.lyrics_text_style) setLyricStyle(parseLyricTextStyle(patch.lyrics_text_style));
       void patchChurchSettings(patch).catch((err) =>
         setError(err instanceof Error ? err.message : "Could not update settings."),
       );
     },
-    [editMode],
+    [],
   );
 
   const { bind: bindCue } = useHoldReorder(
@@ -519,24 +463,6 @@ export default function Live() {
     live,
   );
 
-  useEffect(() => {
-    if (titleSlide) {
-      setPointDraft("");
-      const pending = firstSlide ? pendingSlides[firstSlide.id] : null;
-      setVerseDraft(pending?.scripture_reference ?? firstSlide?.scripture_reference ?? "");
-      return;
-    }
-    const pending = currentSlide ? pendingSlides[currentSlide.id] : null;
-    setPointDraft(pending?.content ?? currentSlide?.content ?? "");
-    setVerseDraft("");
-  }, [
-    currentSlide?.id,
-    firstSlide?.id,
-    firstSlide?.scripture_reference,
-    titleSlide,
-    pendingSlides,
-  ]);
-
   const goToCue = useCallback(
     async (nextIndex: number) => {
       if (!presentation || !cues.length) return;
@@ -549,7 +475,7 @@ export default function Live() {
         verse_overlay_ref: null,
         verse_overlay_translation: null,
         verse_overlay_page: 0,
-        verse_overlay_take: 5,
+        verse_overlay_take: 1,
       });
       setPresentation(next);
     },
@@ -570,13 +496,13 @@ export default function Live() {
     (nextIndex: number) => {
       if (!cues.length) return;
       const bounded = Math.max(0, Math.min(cues.length - 1, nextIndex));
-      if (live && !editMode) {
+      if (live) {
         void goToCue(bounded);
         return;
       }
       setPreviewIndex(bounded);
     },
-    [cues.length, goToCue, live, editMode],
+    [cues.length, goToCue, live],
   );
 
   const readVerseTranslation = (): FreeBibleTranslation => {
@@ -613,11 +539,11 @@ export default function Live() {
       ),
       verse_overlay_translation: readVerseTranslation(),
       verse_overlay_page: 0,
-      verse_overlay_take: 5,
+      verse_overlay_take: 1,
       verse_overlay_font:
         presentation.verse_overlay_font || font || DEFAULT_STAGE_FONT,
       verse_overlay_text_size:
-        presentation.verse_overlay_text_size || lyricSize || "48",
+        presentation.verse_overlay_text_size || lyricSize || DEFAULT_STAGE_TEXT_SIZE,
       verse_overlay_text_style:
         presentation.verse_overlay_text_style ||
         serializeLyricTextStyle({ bold: true, italic: false, underline: false }),
@@ -630,52 +556,12 @@ export default function Live() {
       verse_overlay_ref: null,
       verse_overlay_translation: null,
       verse_overlay_page: 0,
-      verse_overlay_take: 5,
+      verse_overlay_take: 1,
     });
   }, [patchPresentation]);
 
-  const savePoint = (content: string, verse: string) => {
-    if (!live) return;
-    const slide = titleSlide ? firstSlide : currentSlide;
-    if (!slide) return;
-
-    if (editMode) {
-      setPendingSlides((prev) => ({
-        ...prev,
-        [slide.id]: titleSlide
-          ? { scripture_reference: verse.trim() || null }
-          : { content },
-      }));
-      return;
-    }
-
-    window.clearTimeout(slideSaveTimer.current);
-    slideSaveTimer.current = window.setTimeout(() => {
-      void updateSermonSlide(
-        slide.id,
-        titleSlide
-          ? { scripture_reference: verse.trim() || null }
-          : { content },
-      )
-        .then(refreshSetlist)
-        .catch(() => undefined);
-    }, 400);
-  };
-
   const saveRoster = (next: RosterPayload) => {
     if (!live || !displaySetlist || !currentItem || currentItem.item_type !== "roster") return;
-
-    if (editMode) {
-      setPendingRosters((prev) => ({
-        ...prev,
-        [currentItem.id]: {
-          title: next.heading.trim() || "Next Week",
-          subtitle: formatRosterDate(next.date),
-          payload: next,
-        },
-      }));
-      return;
-    }
 
     window.clearTimeout(rosterSaveTimer.current);
     rosterSaveTimer.current = window.setTimeout(() => {
@@ -694,16 +580,19 @@ export default function Live() {
       setRosterDraft(null);
       return;
     }
-    const pending = pendingRosters[currentItem.id];
-    setRosterDraft(pending?.payload ?? normalizeRoster(currentItem.payload));
-  }, [currentItem?.id, pendingRosters]);
+    setRosterDraft(normalizeRoster(currentItem.payload));
+  }, [currentItem?.id]);
 
   useEffect(() => {
     setPreviewIndex(0);
   }, [setlistId]);
 
   useEffect(() => {
-    if (live && !editMode) {
+    if (!live) setEditMode(false);
+  }, [live]);
+
+  useEffect(() => {
+    if (live) {
       setPreviewIndex(liveIndex);
       return;
     }
@@ -712,10 +601,11 @@ export default function Live() {
       return;
     }
     setPreviewIndex((n) => Math.min(n, cues.length - 1));
-  }, [cues.length, live, liveIndex, editMode]);
+  }, [cues.length, live, liveIndex]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (editMode) return;
       const typing = isTypingTarget(event.target);
       if (typing) return;
 
@@ -724,19 +614,6 @@ export default function Live() {
         event.stopPropagation();
         closeVerse();
         return;
-      }
-
-      if (editMode && live) {
-        if (event.shiftKey && (event.code === "Space" || event.key === "ArrowRight")) {
-          event.preventDefault();
-          goLiveNext();
-          return;
-        }
-        if (event.shiftKey && event.key === "ArrowLeft") {
-          event.preventDefault();
-          goLivePrev();
-          return;
-        }
       }
 
       if (event.code === "Space" || event.key === "ArrowRight") {
@@ -771,8 +648,6 @@ export default function Live() {
     selectCue,
     patchPresentation,
     editMode,
-    goLiveNext,
-    goLivePrev,
   ]);
 
   const goLive = async () => {
@@ -800,7 +675,7 @@ export default function Live() {
             verse_overlay_ref: null,
             verse_overlay_translation: null,
             verse_overlay_page: 0,
-            verse_overlay_take: 5,
+            verse_overlay_take: 1,
           })
         : row;
       setPresentation(next);
@@ -873,93 +748,50 @@ export default function Live() {
                 {live ? t("live.onAir") : t("live.standby")}
               </span>
             </div>
-            {live && editMode && (
-              <div className="flex items-center bg-surface-container-high rounded-full border border-white/10 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={goLivePrev}
-                  className="p-1.5 hover:bg-white/5 text-on-surface-variant transition-colors"
-                  title="Previous Live Slide"
-                >
-                  <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-                </button>
-                <div className="w-px h-4 bg-white/10" />
-                <span className="px-2 text-[10px] font-bold text-primary tabular-nums">
-                  LIVE: {liveIndex + 1}
-                </span>
-                <div className="w-px h-4 bg-white/10" />
-                <button
-                  type="button"
-                  onClick={goLiveNext}
-                  className="p-1.5 hover:bg-white/5 text-on-surface-variant transition-colors"
-                  title="Next Live Slide"
-                >
-                  <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-                </button>
-              </div>
-            )}
             <span className="text-xs text-on-surface-variant font-mono">
               {formatTime(elapsed)}
             </span>
           </div>
         </div>
         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-          {live && editMode ? (
-            <>
-              <button
-                type="button"
-                disabled={busy || !hasPending}
-                onClick={() => {
-                  void applyChanges().then(() => {
-                    toast.success(t("live.editsSaved"));
-                  });
-                }}
-                className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-primary text-on-primary hover:brightness-110 transition-all active:scale-95 font-semibold disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined text-[18px]">save</span>
-                <span className="text-xs font-semibold sm:inline">
-                  {hasPending ? t("live.saveEdits") : t("live.editsSaved")}
-                </span>
-              </button>
-              <button
-                type="button"
-                disabled={busy || !hasPending}
-                onClick={() => {
-                  setPendingPresentation({});
-                  setPendingSettings({});
-                  setPendingSlides({});
-                  setPendingSermonSizes({});
-                  setPendingRosters({});
-                  toast.success(t("live.editsDiscarded"));
-                }}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 text-on-surface-variant hover:bg-white/5 transition-all disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined text-[18px]">undo</span>
-                <span className="text-xs font-semibold hidden lg:inline">
-                  {t("live.discardEdits")}
-                </span>
-              </button>
-            </>
-          ) : null}
-          {live ? (
+          <div className="hidden lg:flex items-center rounded-lg border border-white/10 overflow-hidden">
             <button
               type="button"
-              onClick={() => void toggleEditMode()}
-              className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border transition-all active:scale-95 ${
-                editMode
-                  ? "bg-secondary text-on-secondary border-secondary shadow-[0_0_15px_rgba(var(--secondary-rgb),0.3)]"
-                  : "bg-surface-container-high border-white/10 hover:bg-white/5 text-on-surface"
+              onClick={() => toggleDeck("left")}
+              aria-pressed={!hiddenDecks.left}
+              title={hiddenDecks.left ? "Show setlist deck" : "Hide setlist deck"}
+              className={`p-2 transition-colors ${
+                hiddenDecks.left ? "text-on-surface-variant hover:bg-white/5" : "bg-white/10 text-on-surface"
               }`}
             >
               <span className="material-symbols-outlined text-[18px]">
-                {editMode ? "edit_off" : "edit"}
+                {hiddenDecks.left ? "left_panel_open" : "left_panel_close"}
               </span>
+            </button>
+            <div className="w-px h-5 bg-white/10" />
+            <button
+              type="button"
+              onClick={() => toggleDeck("right")}
+              aria-pressed={!hiddenDecks.right}
+              title={hiddenDecks.right ? "Show controls deck" : "Hide controls deck"}
+              className={`hidden xl:block p-2 transition-colors ${
+                hiddenDecks.right ? "text-on-surface-variant hover:bg-white/5" : "bg-white/10 text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">
+                {hiddenDecks.right ? "right_panel_open" : "right_panel_close"}
+              </span>
+            </button>
+          </div>
+          {live ? (
+            <button
+              type="button"
+              onClick={() => setEditMode(true)}
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border transition-all active:scale-95 bg-surface-container-high border-white/10 hover:bg-white/5 text-on-surface"
+            >
+              <span className="material-symbols-outlined text-[18px]">edit</span>
               <span className="text-xs font-semibold hidden sm:inline">
-                {editMode
-                  ? hasPending
-                    ? t("live.stopEditingPending")
-                    : t("live.stopEditing")
-                  : t("live.editMode")}
+                {t("live.editMode")}
               </span>
             </button>
           ) : null}
@@ -1008,7 +840,7 @@ export default function Live() {
       </header>
 
       <main className="pt-16 h-screen flex overflow-hidden">
-        <aside className="hidden lg:flex w-[280px] border-r border-white/5 bg-surface-container-lowest/50 flex-col h-full overflow-y-auto custom-scrollbar shrink-0">
+        <aside className={`${hiddenDecks.left ? "hidden" : "hidden lg:flex"} w-[280px] border-r border-white/5 bg-surface-container-lowest/50 flex-col h-full overflow-y-auto custom-scrollbar shrink-0`}>
           <div className="p-4 border-b border-white/5 bg-surface-container-low shrink-0">
             <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant mb-2">
               {t("live.setlist")}
@@ -1070,7 +902,7 @@ export default function Live() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <div ref={cueListRef} className="relative flex-1 overflow-y-auto custom-scrollbar">
             <div className="p-2 space-y-2">
               {cues.map((item, cueIndex) => {
                 const isSelected = cueIndex === index;
@@ -1088,6 +920,7 @@ export default function Live() {
                   <div
                     key={item.id}
                     {...hold}
+                    data-cue-index={cueIndex}
                     role="button"
                     tabIndex={0}
                     onClick={() => selectCue(cueIndex)}
@@ -1206,23 +1039,15 @@ export default function Live() {
                       font={font}
                       lyricSize={lyricSize}
                       lyricStyle={lyricStyle}
+                      chords={chords}
                       darkText={darkText}
                       onVerseClick={live ? openVerse : undefined}
                     />
                   </div>
                 )}
               </div>
-              <div className={`absolute top-4 left-4 flex items-center gap-2 px-3 py-1 rounded font-bold text-[10px] uppercase shadow-lg z-10 transition-colors ${editMode ? "bg-secondary text-on-secondary" : "bg-primary text-on-primary"}`}>
-                {editMode ? (
-                  <>
-                    <span className="material-symbols-outlined text-[12px]">edit</span>
-                    Edit Mode: Preview Only
-                  </>
-                ) : live ? (
-                  "On Air Preview"
-                ) : (
-                  "Standby Preview"
-                )}
+              <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1 rounded font-bold text-[10px] uppercase shadow-lg z-10 bg-primary text-on-primary">
+                {live ? "On Air Preview" : "Standby Preview"}
               </div>
               {displayPresentation?.verse_overlay_ref ? (
                 <VerseOverlay
@@ -1236,7 +1061,7 @@ export default function Live() {
                   textSize={
                     displayPresentation.verse_overlay_text_size ||
                     lyricSize ||
-                    "48"
+                    DEFAULT_STAGE_TEXT_SIZE
                   }
                   textStyle={
                     displayPresentation.verse_overlay_text_style || "bold"
@@ -1305,8 +1130,8 @@ export default function Live() {
         </section>
 
         <aside
-          className={`hidden xl:flex border-l border-white/5 bg-surface-container-lowest/50 flex-col p-4 gap-6 h-full overflow-y-auto custom-scrollbar shrink-0 transition-[width] duration-200 ${
-            pointEditorActive || rosterActive ? "w-[min(560px,46vw)]" : "w-[320px]"
+          className={`${hiddenDecks.right ? "hidden" : "hidden xl:flex"} border-l border-white/5 bg-surface-container-lowest/50 flex-col p-4 gap-6 h-full overflow-y-auto custom-scrollbar shrink-0 transition-[width] duration-200 ${
+            rosterActive ? "w-[min(560px,46vw)]" : "w-[320px]"
           }`}
         >
           {!live ? (
@@ -1528,7 +1353,7 @@ export default function Live() {
             {!collapsedSections["lyrics"] && (
               <>
                 {presentation?.verse_overlay_ref ? (
-                  <div className="grid grid-cols-3 gap-1.5">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {FREE_BIBLE_TRANSLATIONS.map((item) => {
                       const activeLang =
                         (displayPresentation?.verse_overlay_translation || "ceb") === item.value;
@@ -1544,11 +1369,7 @@ export default function Live() {
                               : "bg-surface-container-low border border-white/10 text-on-surface-variant hover:bg-white/5"
                           }`}
                         >
-                          {item.value === "ceb"
-                            ? "Visayan"
-                            : item.value === "niv"
-                              ? "English (NIV)"
-                              : "English (KJV)"}
+                          {item.label}
                         </button>
                       );
                     })}
@@ -1631,7 +1452,7 @@ export default function Live() {
                     presentation?.verse_overlay_ref
                       ? displayPresentation?.verse_overlay_text_size ||
                         lyricSize ||
-                        "48"
+                        DEFAULT_STAGE_TEXT_SIZE
                       : lyricSize
                   }
                   onChange={(size) => {
@@ -1679,6 +1500,36 @@ export default function Live() {
           </div>
           ) : null}
 
+          {active?.kind === "lyric" && !presentation?.verse_overlay_ref ? (
+            <ChordControls
+              chords={chords}
+              onChange={updateChords}
+              itemId={active.itemId}
+              songKey={active.musicalKey}
+              hasChords={activeHasChords}
+            />
+          ) : null}
+
+          {active?.kind === "scripture" && currentPassage && !presentation?.verse_overlay_ref ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => toggleSection("scripture")}
+                className="w-full flex items-center justify-between group"
+              >
+                <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
+                  Scripture text
+                </h4>
+                <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["scripture"] ? "-rotate-90" : ""}`}>
+                  expand_more
+                </span>
+              </button>
+              {!collapsedSections["scripture"] && (
+                <ScriptureStyleControls passage={currentPassage} onChange={patchScriptureStyle} />
+              )}
+            </div>
+          ) : null}
+
           {sermonActive ? (
             <div className="space-y-3">
               <button
@@ -1695,156 +1546,31 @@ export default function Live() {
               </button>
               {!collapsedSections["sermon"] && (
                 <>
-                  {presentation?.verse_overlay_ref ? null : (
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                        Point size
-                      </h4>
-                      <TextSizePicker
-                        disabled={!live}
-                        value={currentItem?.sermon?.text_size || "md"}
-                        onChange={(size) => {
-                          if (!live || !currentItem?.sermon_id) return;
-                          
-                          if (editMode) {
-                            setPendingSermonSizes((prev) => ({
-                              ...prev,
-                              [currentItem.sermon_id!]: size,
-                            }));
-                            return;
-                          }
-
-                          void updateSermonTextSize(currentItem.sermon_id, size)
-                            .then(refreshSetlist)
-                            .catch((err) =>
-                              setError(
-                                err instanceof Error ? err.message : "Could not change size.",
-                              ),
-                            );
-                        }}
-                      />
-                    </div>
-                  )}
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      disabled={!live || !currentSlide || isSermonSpace(currentSlide.content)}
-                      onClick={() => {
-                        if (!currentSlide || isSermonSpace(currentSlide.content)) return;
-                        const next = insertSermonGap(pointDraft);
-                        setPointDraft(next);
-                        setPointSync((n) => n + 1);
-                        savePoint(next, verseDraft);
-                      }}
-                      className="flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 text-[11px] font-semibold disabled:opacity-40"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">
-                        space_bar
-                      </span>
-                      Space
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!live}
-                      onClick={() => {
-                        if (!live || !currentItem?.sermon_id) return;
-                        void insertSermonSlide(currentItem.sermon_id, {
-                          content: "New point",
-                          afterSlideId: currentSlide?.id ?? null,
-                        })
-                          .then(refreshSetlist)
-                          .catch((err) =>
-                            setError(
-                              err instanceof Error ? err.message : "Could not add a point.",
-                            ),
-                          );
-                      }}
-                      className="flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 text-[11px] font-semibold"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">add</span>
-                      Point
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!live || !currentSlide}
-                      onClick={() => {
-                        if (!currentSlide) return;
-                        void deleteSermonSlide(currentSlide.id)
-                          .then(refreshSetlist)
-                          .catch((err) =>
-                            setError(
-                              err instanceof Error ? err.message : "Could not delete.",
-                            ),
-                          );
-                      }}
-                      className="flex items-center justify-center gap-1 p-3 rounded-xl border border-error/20 text-error hover:bg-error/10 text-[11px] font-semibold disabled:opacity-40"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">delete</span>
-                      Delete
-                    </button>
-                  </div>
-                  {titleSlide && firstSlide ? (
-                    <div className="space-y-2">
-                      <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                        Title verse
-                      </h4>
-                      <input
-                        value={verseDraft}
-                        disabled={!live}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setVerseDraft(value);
-                          savePoint(pointDraft, value);
-                        }}
-                        className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
-                        placeholder="Verse · Fil 3:14"
-                      />
-                      <p className="text-[10px] text-on-surface-variant">
-                        This verse sits at the bottom of the title slide only.
-                      </p>
-                    </div>
-                  ) : currentSlide && !isSermonSpace(currentSlide.content) ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                          Edit point
-                        </h4>
-                        {editMode ? (
-                          <button
-                            type="button"
-                            disabled={busy || !hasPending}
-                            onClick={() => {
-                              void applyChanges().then(() => {
-                                toast.success(t("live.editsSaved"));
-                              });
-                            }}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary text-on-primary text-[11px] font-semibold disabled:opacity-40"
-                          >
-                            <span className="material-symbols-outlined text-[14px]">
-                              save
-                            </span>
-                            {hasPending ? t("live.saveEdits") : t("live.editsSaved")}
-                          </button>
-                        ) : null}
-                      </div>
-                      <PointEditor
-                        value={pointDraft}
-                        readOnly={!live}
-                        expanded={pointEditorActive}
-                        syncNonce={pointSync}
-                        onFocusChange={setPointEditorActive}
-                        onChange={(next) => {
-                          if (!live) return;
-                          setPointDraft(next);
-                          savePoint(next, verseDraft);
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <p className="text-xs text-on-surface-variant">
-                      This is a space. Advance when you are ready for the next point.
+                  <div className="rounded-lg border border-white/10 bg-surface-container-low p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant mb-1">
+                      {titleSlide
+                        ? "Title slide"
+                        : currentSlide && isSermonSpace(currentSlide.content)
+                          ? "Space"
+                          : "Current point"}
                     </p>
-                  )}
+                    <p className="text-sm text-on-surface line-clamp-4 whitespace-pre-line">
+                      {titleSlide
+                        ? currentItem?.sermon?.title || currentItem?.title
+                        : currentSlide && isSermonSpace(currentSlide.content)
+                          ? "Blank slide. Advance when you are ready for the next point."
+                          : sermonPlainText(currentSlide?.content ?? "").trim() || "Empty point"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!live}
+                    onClick={() => setEditMode(true)}
+                    className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-primary/30 text-primary hover:bg-primary/10 text-xs font-semibold disabled:opacity-40"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">edit_note</span>
+                    Edit sermon slides
+                  </button>
                 </>
               )}
             </div>
@@ -1939,11 +1665,34 @@ export default function Live() {
         }`}
       >
         <span className="text-[10px] font-bold text-primary tracking-widest uppercase">
-          {editMode && live 
-            ? "Space / Arrows: Preview · Shift + Arrows: Live Control" 
-            : `Space / arrows: next · ${live ? "hold and drag to reorder" : "go live to edit"}`}
+          {`Space / arrows: next · ${live ? "hold and drag to reorder" : "go live to edit"}`}
         </span>
       </div>
+
+      <LiveEditWorkspace
+        open={editMode && live}
+        setlist={displaySetlist}
+        presentation={displayPresentation}
+        cues={cues}
+        liveIndex={liveIndex}
+        font={font}
+        lyricSize={lyricSize}
+        lyricStyle={lyricStyle}
+        chords={chords}
+        stageBg={stageBg}
+        actions={{
+          onFontChange: (next) => patchSettings({ default_font: next }),
+          onLyricSizeChange: (next) => patchSettings({ lyrics_text_size: next }),
+          onLyricStyleChange: (next) =>
+            patchSettings({ lyrics_text_style: serializeLyricTextStyle(next) }),
+          onChordsChange: updateChords,
+        }}
+        onPrev={goLivePrev}
+        onNext={goLiveNext}
+        onShowCue={(next) => void goToCue(next)}
+        onRefresh={refreshSetlist}
+        onClose={() => setEditMode(false)}
+      />
     </div>
   );
 }

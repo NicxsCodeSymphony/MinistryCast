@@ -30,12 +30,21 @@ function nextWait(lastSyncAt: string | null, frequency: string, minMs: number) {
   return Math.max(minMs, interval - elapsed);
 }
 
+/** Superadmins switch workspaces at runtime; sync whichever church is selected now. */
+async function activeChurchId(fallback: string) {
+  try {
+    return await requireChurchId();
+  } catch {
+    return fallback;
+  }
+}
+
 async function schedule(churchId: string, minMs = 5_000) {
   clearTimer();
   const meta = await getMeta(churchId);
   const wait = nextWait(meta.lastSyncAt ?? meta.hydratedAt, meta.backupFrequency, minMs);
   timer = window.setTimeout(() => {
-    void runSync(churchId, "schedule");
+    void activeChurchId(churchId).then((id) => runSync(id, "schedule"));
   }, wait);
 }
 
@@ -131,6 +140,17 @@ export async function reloadChurchCatalog(
   options?: { force?: boolean },
 ) {
   if (!churchId) return;
+  if (options?.force && isOnline()) {
+    // Push queued edits for this workspace first so a superadmin switching churches
+    // uploads what they changed there instead of waiting for the next app launch.
+    try {
+      await runSync(churchId, "manual");
+      invalidateQueries();
+      return;
+    } catch {
+      /* fall back to a pull-only refresh */
+    }
+  }
   await ensureHydrated(churchId, options);
   invalidateQueries();
 }

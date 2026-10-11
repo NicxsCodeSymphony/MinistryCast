@@ -51,6 +51,8 @@ import {
   type StageBackgroundId,
 } from "../../lib/stageBackgrounds";
 import {
+  DEFAULT_LYRIC_TEXT_STYLE,
+  DEFAULT_STAGE_TEXT_SIZE,
   parseLyricTextStyle,
   serializeLyricTextStyle,
   type LyricTextStyle,
@@ -141,12 +143,8 @@ export default function Settings() {
   const [theme, setTheme] = useState<ThemeName>(prefs.theme);
   const [language, setLanguage] = useState<Lang>(prefs.language);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
-  const [lyricSize, setLyricSize] = useState("48");
-  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>({
-    bold: false,
-    italic: false,
-    underline: false,
-  });
+  const [lyricSize, setLyricSize] = useState(DEFAULT_STAGE_TEXT_SIZE);
+  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>(DEFAULT_LYRIC_TEXT_STYLE);
   const [stageBackground, setStageBackground] = useState<StageBackgroundId>(
     DEFAULT_STAGE_BACKGROUND,
   );
@@ -295,7 +293,7 @@ export default function Settings() {
     setLanguage(prefs.language);
     setChurchInterfaceLanguage(settings.interface_language || "en");
     setFont(asStageFont(settings.default_font));
-    setLyricSize(settings.lyrics_text_size || "48");
+    setLyricSize(settings.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
     setLyricStyle(parseLyricTextStyle(settings.lyrics_text_style));
     setStageBackground(asStageBackground(settings.stage_background));
     setTransition(settings.default_transition || "dissolve");
@@ -303,8 +301,8 @@ export default function Settings() {
     setBaseline(
       settingsDraftKey({
         font: asStageFont(settings.default_font),
-        lyricSize: settings.lyrics_text_size || "48",
-        lyricStyle: settings.lyrics_text_style || "",
+        lyricSize: settings.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE,
+        lyricStyle: serializeLyricTextStyle(parseLyricTextStyle(settings.lyrics_text_style)),
         transition: settings.default_transition || "dissolve",
         backup: settings.backup_frequency || "hourly",
         stageBackground: asStageBackground(settings.stage_background),
@@ -1122,7 +1120,8 @@ export default function Settings() {
                           changeTheme("dark");
                           changeLanguage("en");
                           setFont(DEFAULT_STAGE_FONT);
-                          setLyricSize("48");
+                          setLyricSize(DEFAULT_STAGE_TEXT_SIZE);
+                          setLyricStyle(DEFAULT_LYRIC_TEXT_STYLE);
                           setStageBackground(DEFAULT_STAGE_BACKGROUND);
                           setTransition("dissolve");
                           setBackup("hourly");
@@ -1171,7 +1170,8 @@ export default function Settings() {
                     type="button"
                     onClick={() => {
                       setFont(DEFAULT_STAGE_FONT);
-                      setLyricSize("48");
+                      setLyricSize(DEFAULT_STAGE_TEXT_SIZE);
+                      setLyricStyle(DEFAULT_LYRIC_TEXT_STYLE);
                       setStageBackground(DEFAULT_STAGE_BACKGROUND);
                       setTransition("dissolve");
                     }}

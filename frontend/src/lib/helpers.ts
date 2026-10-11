@@ -140,10 +140,10 @@ export function coerceLyricSections(
 }
 
 export function textToLyricSections(text: string) {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
+  if (!text.trim()) return [];
 
-  const lines = trimmed.split("\n");
+  // Keep leading spaces on the first line: chord lines rely on their columns.
+  const lines = text.replace(/^(?:[ \t]*\n)+/, "").replace(/\s+$/, "").split("\n");
   const sections: { section: string; content: string }[] = [];
   let section = "Verse 1";
   let body: string[] = [];
@@ -256,6 +256,8 @@ export const SERMON_TEXT_SIZES: { id: SermonTextSize; label: string; px: number 
     { id: "lg", label: "L", px: 56 },
     { id: "xl", label: "XL", px: 72 },
   ];
+
+export const DEFAULT_SERMON_TEXT_SIZE: SermonTextSize = "xl";
 
 export function sermonSizePx(size?: string | null) {
   if (!size) return 40;

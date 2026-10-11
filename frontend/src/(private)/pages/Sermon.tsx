@@ -2,21 +2,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import ConfirmDialog from "../../components/modals/ConfirmDialog";
 import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
-import Modal from "../../components/modals/Modal";
 import { PageSkeleton } from "../../components/Skeleton";
-import SermonStagePreview from "../../components/SermonStagePreview";
 import TextSizePicker from "../../components/TextSizePicker";
 import ChurchSharePicker from "../../components/ChurchSharePicker";
 import { LoadMoreBar } from "../../components/LoadMoreBar";
 import {
+  ScaledStage,
+  SlideRow,
+  StagePointEditor,
+  StageTitleEditor,
+  ToolButton,
+} from "../../components/StageEditor";
+import {
   createSermon,
   deleteSermon,
+  getChurchSettings,
   getSermon,
   listChurchNames,
   listSermons,
   lookupScripture,
   readSetlistViewChurchId,
-  reorderSermonSlides,
   setSermonArchived,
   updateSermon,
   writeSetlistViewChurchId,
@@ -24,23 +29,30 @@ import {
 } from "../../lib/api";
 import { getSessionProfile, isSuperadmin } from "../../lib/auth";
 import { parseBibleReference } from "../../lib/bible";
-import { useHoldReorder } from "../../lib/holdDrag";
 import {
+  DEFAULT_SERMON_TEXT_SIZE,
+  SERMON_SPACE,
   formatDuration,
   formatRelative,
   insertSermonGap,
   isSermonSpace,
+  isTypingTarget,
   moveItem,
   parseDurationSeconds,
   requireChurchId,
-  sermonDisplayLines,
 } from "../../lib/helpers";
+import { sermonPlainText } from "../../lib/sermonMarkup";
+import {
+  asStageBackground,
+  stageUsesDarkText,
+  type StageBackgroundId,
+} from "../../lib/stageBackgrounds";
 import { useSearch } from "../../lib/SearchContext";
 import { usePageActive } from "../../lib/PageActiveContext";
 import { usePrefs } from "../../lib/PrefsContext";
 import { useToast } from "../../lib/ToastContext";
 import { reloadChurchCatalog } from "../../lib/offline/sync";
-import { PAGE_SIZE, type LiveCue, type Sermon } from "../../lib/types";
+import { PAGE_SIZE, type Sermon } from "../../lib/types";
 
 type DraftSlide = {
   id: string;
@@ -58,9 +70,19 @@ function sermonPointNumber(slides: DraftSlide[], id: string) {
   return Math.max(1, point);
 }
 
-function titleVerseOf(slides: DraftSlide[]) {
-  return (
-    slides.find((row) => !isSermonSpace(row.content))?.verse.trim() || ""
+const TITLE_KEY = "title";
+
+/** The title-slide verse lives on the first point, so it follows whichever point ends up first. */
+function carryTitleVerse(prev: DraftSlide[], next: DraftSlide[]) {
+  const before = prev.find((row) => !isSermonSpace(row.content));
+  const after = next.find((row) => !isSermonSpace(row.content));
+  if (!before || !after || before.id === after.id || !before.verse.trim()) return next;
+  return next.map((row) =>
+    row.id === after.id
+      ? { ...row, verse: before.verse }
+      : row.id === before.id
+        ? { ...row, verse: "" }
+        : row,
   );
 }
 
@@ -78,53 +100,6 @@ function sermonDraftKey(input: {
   textSize: string;
 }) {
   return JSON.stringify(input);
-}
-
-function cueForTitleSlide(
-  title: string,
-  verse: string,
-  textSize: string,
-): LiveCue {
-  const heading = title.trim() || "Untitled sermon";
-  return {
-    id: "preview-title",
-    itemId: "preview",
-    kind: "sermon",
-    label: "TITLE",
-    tag: "TTL",
-    title: heading,
-    preview: heading,
-    lines: [heading],
-    heading: null,
-    align: "center",
-    textSize,
-    verse: verse || null,
-    versePlacement: verse ? "bottom" : undefined,
-    titleSlide: true,
-  };
-}
-
-function cueForPoint(
-  slide: DraftSlide,
-  point: number,
-  title: string,
-  textSize: string,
-): LiveCue {
-  const lines = sermonDisplayLines(slide.content);
-  return {
-    id: slide.id,
-    itemId: "preview",
-    kind: "sermon",
-    label: `POINT ${point}`,
-    tag: `P${point}`,
-    title: title.trim() || "Untitled sermon",
-    preview: slide.content.slice(0, 80),
-    lines: lines.length ? lines : [slide.content.trim() || "This point is empty"],
-    heading: null,
-    slideId: slide.id,
-    align: "start",
-    textSize,
-  };
 }
 
 export default function Sermon() {
@@ -148,7 +123,6 @@ export default function Sermon() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [superadmin, setSuperadmin] = useState(false);
   const [churches, setChurches] = useState<ChurchName[]>([]);
   const [viewChurchId, setViewChurchId] = useState(readSetlistViewChurchId);
@@ -166,42 +140,28 @@ export default function Sermon() {
   const [scripturePreview, setScripturePreview] = useState("");
   const [scriptureBusy, setScriptureBusy] = useState(false);
   const [scriptureHint, setScriptureHint] = useState("");
-  const [textSize, setTextSize] = useState("md");
-  const [focusedSlideId, setFocusedSlideId] = useState<string | null>(null);
-  const [editingSlideId, setEditingSlideId] = useState<string | null>(null);
-  const [previewSlideId, setPreviewSlideId] = useState<string | null>(null);
-  const [previewTitleSlide, setPreviewTitleSlide] = useState(false);
+  const [textSize, setTextSize] = useState<string>(DEFAULT_SERMON_TEXT_SIZE);
+  const [selectedKey, setSelectedKey] = useState(TITLE_KEY);
+  const [syncNonce, setSyncNonce] = useState(0);
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [stageBg, setStageBg] = useState<StageBackgroundId>("sanctuary");
   const [baseline, setBaseline] = useState<string | null>(null);
-  const editorRef = useRef<HTMLTextAreaElement>(null);
   const lastAutoSlide = useRef("");
   const persistBypass = useRef<(fn: () => void) => void>((fn) => fn());
   const persistSave = useRef<() => Promise<boolean>>(async () => false);
-  const { bind: bindSlide, draggingId } = useHoldReorder(
-    "sermon-slides",
-    (fromId, toId) => {
-      const from = slides.findIndex((row) => row.id === fromId);
-      const to = slides.findIndex((row) => row.id === toId);
-      if (from === -1 || to === -1) return;
-      const next = moveItem(slides, from, to);
-      setSlides(next);
-      if (sermonId && !next.some((s) => s.id.startsWith("new-"))) {
-        void reorderSermonSlides(sermonId, next.map((s) => s.id)).catch((err: unknown) =>
-          toast.error(err instanceof Error ? err.message : "Could not reorder slides."),
-        );
-      }
-    },
-  );
 
-  const openSlideEditor = (id: string) => {
-    setFocusedSlideId(id);
-    setEditingSlideId(id);
+  const selectSlide = (key: string, focus = false) => {
+    setSelectedKey(key);
+    setSyncNonce((n) => n + 1);
+    setFocusKey(focus ? `${key}:${Date.now()}` : null);
   };
 
   useEffect(() => {
-    if (!editingSlideId) return;
-    const id = window.setTimeout(() => editorRef.current?.focus(), 40);
-    return () => window.clearTimeout(id);
-  }, [editingSlideId]);
+    void getChurchSettings()
+      .then((settings) => setStageBg(asStageBackground(settings?.stage_background)))
+      .catch(() => undefined);
+  }, []);
 
   const visibleLibrary = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -213,7 +173,7 @@ export default function Sermon() {
     );
   }, [library, query]);
 
-  const applySermon = (sermon: Sermon) => {
+  const applySermon = (sermon: Sermon, keepSelection = false) => {
     const nextSlides =
       (sermon.slides ?? []).length
         ? (sermon.slides ?? []).map((slide) => ({
@@ -226,7 +186,7 @@ export default function Sermon() {
     const nextDuration = sermon.est_duration_seconds
       ? formatDuration(sermon.est_duration_seconds)
       : "";
-    const nextSize = sermon.text_size || "md";
+    const nextSize = sermon.text_size || DEFAULT_SERMON_TEXT_SIZE;
     setSermonId(sermon.id);
     setTitle(sermon.title);
     setScripture(sermon.primary_scripture ?? "");
@@ -246,7 +206,12 @@ export default function Sermon() {
         : [sermon.church_id],
     );
     lastAutoSlide.current = "";
-    setEditingSlideId(null);
+    const keepIndex = slides.findIndex((row) => row.id === selectedKey);
+    selectSlide(
+      keepSelection && keepIndex >= 0 && nextSlides[keepIndex]
+        ? nextSlides[keepIndex].id
+        : TITLE_KEY,
+    );
     setBaseline(
       sermonDraftKey({
         title: sermon.title,
@@ -275,10 +240,11 @@ export default function Sermon() {
     setSeries("");
     setSlides([{ id: "new-1", content: "", verse: "" }]);
     setNotes([]);
-    setTextSize("md");
+    setTextSize(DEFAULT_SERMON_TEXT_SIZE);
     setChurchIds(viewChurchId ? [viewChurchId] : []);
     lastAutoSlide.current = "";
-    setEditingSlideId(null);
+    selectSlide(TITLE_KEY);
+    setDetailsOpen(false);
     setBaseline(
       sermonDraftKey({
         title: "",
@@ -289,7 +255,7 @@ export default function Sermon() {
         series: "",
         slides: [{ id: "new-1", content: "", verse: "" }],
         notes: [],
-        textSize: "md",
+        textSize: DEFAULT_SERMON_TEXT_SIZE,
       }),
     );
     setSearchParams({ sermon: "new" }, { replace: true });
@@ -344,7 +310,6 @@ export default function Sermon() {
         });
         setLibrary(page.items);
         setTotal(page.total);
-        setOffset(0);
         setLoading(false);
 
         const churchId = admin
@@ -412,7 +377,6 @@ export default function Sermon() {
       });
       setLibrary((prev) => (append ? [...prev, ...page.items] : page.items));
       setTotal(page.total);
-      setOffset(nextOffset);
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -462,6 +426,7 @@ export default function Sermon() {
                 : row,
             );
           });
+          setSyncNonce((n) => n + 1);
         })
         .catch((err) => {
           if (err instanceof DOMException && err.name === "AbortError") return;
@@ -481,10 +446,12 @@ export default function Sermon() {
   const save = async (): Promise<boolean> => {
     if (!title.trim()) {
       setError("Enter a sermon title.");
-      toast.warning("Enter a sermon title.");
+      toast.warning("Type the sermon title on the title slide.");
+      selectSlide(TITLE_KEY);
       return false;
     }
     if (superadmin && churchIds.length === 0) {
+      setDetailsOpen(true);
       setError("Choose at least one church for this sermon.");
       toast.warning("Choose at least one church for this sermon.");
       return false;
@@ -514,7 +481,7 @@ export default function Sermon() {
       const next = sermonId
         ? await updateSermon(sermonId, payload)
         : await createSermon(payload);
-      applySermon(next);
+      applySermon(next, true);
       setLibrary((prev) => [next, ...prev.filter((row) => row.id !== next.id)]);
       persistBypass.current(() =>
         setSearchParams({ sermon: next.id }, { replace: true }),
@@ -557,6 +524,27 @@ export default function Sermon() {
     onSave: () => persistSave.current(),
   });
   persistBypass.current = draft.bypass;
+
+  useEffect(() => {
+    if (!editorOpen || !pageActive) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void persistSave.current();
+        return;
+      }
+      if (isTypingTarget(event.target)) return;
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      const keys = [TITLE_KEY, ...slides.map((row) => row.id)];
+      const at = keys.indexOf(selectedKey);
+      const next = keys[at + (event.key === "ArrowDown" ? 1 : -1)];
+      if (!next) return;
+      event.preventDefault();
+      selectSlide(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   if (loading && !searchParams.get("sermon") && library.length === 0) {
     return <PageSkeleton />;
@@ -784,13 +772,13 @@ export default function Sermon() {
           <LoadMoreBar
             shown={library.length}
             total={total}
-            hasMore={offset + library.length < total}
+            hasMore={library.length < total}
             loading={loadingMore}
             onMore={() => {
               setLoadingMore(true);
               void listSermons({
                 limit: PAGE_SIZE,
-                offset: offset + PAGE_SIZE,
+                offset: library.length,
                 viewChurchId: superadmin ? viewChurchId : null,
                 query: query.trim() || undefined,
                 archived: showArchive,
@@ -798,7 +786,6 @@ export default function Sermon() {
                 .then((page) => {
                   setLibrary((prev) => [...prev, ...page.items]);
                   setTotal(page.total);
-                  setOffset(offset + PAGE_SIZE);
                 })
                 .catch((err) => {
                   const message =
@@ -825,691 +812,419 @@ export default function Sermon() {
   }
 
   const deletingSlide = slides.find((slide) => slide.id === deleteSlideId);
-  const editingSlide = slides.find((slide) => slide.id === editingSlideId);
-  const editingIndex = slides.findIndex((slide) => slide.id === editingSlideId);
-  const titlePointId = slides.find((row) => !isSermonSpace(row.content))?.id;
-  const titleVerse = titleVerseOf(slides);
-  const focusedPoint = slides.find(
-    (row) => row.id === focusedSlideId && !isSermonSpace(row.content),
-  );
-  const sidePreviewCue = focusedPoint
-    ? cueForPoint(
-        focusedPoint,
-        sermonPointNumber(slides, focusedPoint.id),
-        title,
-        textSize,
-      )
-    : cueForTitleSlide(title, titleVerse, textSize);
-  const previewSlide = slides.find((row) => row.id === previewSlideId);
-  const modalPreviewCue = previewTitleSlide
-    ? cueForTitleSlide(title, titleVerse, textSize)
-    : previewSlide && !isSermonSpace(previewSlide.content)
-      ? cueForPoint(
-          previewSlide,
-          sermonPointNumber(slides, previewSlide.id),
-          title,
-          textSize,
-        )
-      : null;
+  const selectedSlide =
+    selectedKey === TITLE_KEY
+      ? undefined
+      : slides.find((row) => row.id === selectedKey);
+  const selectedIndex = selectedSlide ? slides.indexOf(selectedSlide) : -1;
+  const titleHolder = slides.find((row) => !isSermonSpace(row.content));
+  const editingPoint = Boolean(selectedSlide && !isSermonSpace(selectedSlide.content));
+  const projectedCount =
+    1 +
+    slides.filter(
+      (row) => isSermonSpace(row.content) || sermonPlainText(row.content).trim(),
+    ).length;
+
+  const patchSlide = (id: string, patch: Partial<DraftSlide>) =>
+    setSlides((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    );
+
+  const insertSlide = (content: string) => {
+    const id = `new-${Date.now()}`;
+    setSlides((prev) => {
+      const index = prev.findIndex((row) => row.id === selectedKey);
+      const at =
+        selectedKey === TITLE_KEY ? 0 : index >= 0 ? index + 1 : prev.length;
+      const next = [
+        ...prev.slice(0, at),
+        { id, content, verse: "" },
+        ...prev.slice(at),
+      ];
+      return carryTitleVerse(prev, next);
+    });
+    selectSlide(id, !isSermonSpace(content));
+  };
+
+  const moveSlide = (delta: number) => {
+    const to = selectedIndex + delta;
+    if (selectedIndex < 0 || to < 0 || to >= slides.length) return;
+    setSlides((prev) =>
+      carryTitleVerse(prev, moveItem(prev, selectedIndex, to)),
+    );
+  };
+
+  const removeSlide = (id: string) => {
+    const index = slides.findIndex((row) => row.id === id);
+    const remaining = slides.filter((row) => row.id !== id);
+    const next = remaining.length
+      ? remaining
+      : [{ id: `new-${Date.now()}`, content: "", verse: "" }];
+    setSlides((prev) => carryTitleVerse(prev, next));
+    selectSlide(index > 0 ? next[index - 1].id : TITLE_KEY);
+  };
+
+  const requestDelete = (slide: DraftSlide) => {
+    if (isSermonSpace(slide.content) || !sermonPlainText(slide.content).trim()) {
+      removeSlide(slide.id);
+    } else {
+      setDeleteSlideId(slide.id);
+    }
+  };
+
+  const fieldClass =
+    "w-full bg-surface-container-lowest border border-white/10 rounded-lg py-2.5 px-3 text-sm focus:border-primary focus:outline-none";
+  const fieldLabel =
+    "block text-[11px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant mb-1.5";
 
   return (
-    <section className="h-full overflow-y-auto custom-scrollbar bg-surface-container-lowest p-4 sm:p-6 lg:p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
-          <nav className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant">
-            <Link
-              to="/songs"
-              className="hover:text-primary hover:underline underline-offset-4 cursor-pointer"
-            >
-              {t("sermons.library")}
-            </Link>
-            <span className="material-symbols-outlined text-sm">chevron_right</span>
-            <button
-              type="button"
-              onClick={() => draft.guard(() => setSearchParams({}))}
-              className="hover:text-primary hover:underline underline-offset-4 cursor-pointer"
-            >
-              {t("sermons.title")}
-            </button>
-            <span className="material-symbols-outlined text-sm">chevron_right</span>
-            <span className="text-primary">
-              {sermonId ? title || "Edit" : "New sermon"}
-            </span>
-          </nav>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            {sermonId ? (
-              <button
-                type="button"
-                onClick={() =>
-                  setDeletingSermon({
-                    id: sermonId,
-                    title: title.trim() || "Untitled sermon",
-                  })
-                }
-                className="p-2.5 rounded-lg bg-white/5 hover:bg-error/10 hover:text-error transition-colors"
-                aria-label="Delete sermon"
-              >
-                <span className="material-symbols-outlined">delete</span>
-              </button>
-            ) : null}
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => void save()}
-              className="px-6 sm:px-8 py-2.5 rounded-lg text-sm font-bold bg-gradient-to-r from-primary-container to-secondary-container text-white shadow-lg hover:shadow-primary/20 transition-all active:scale-95 flex items-center gap-2 disabled:opacity-60"
-            >
-              <span className="material-symbols-outlined text-sm">save</span>
-              {saving ? "Saving…" : saved && !dirty ? "Saved" : "Save Sermon"}
-              {dirty && !saving ? (
-                <span className="ml-0.5 rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-                  Unsaved
-                </span>
-              ) : null}
-            </button>
+    <section className="h-full flex flex-col bg-surface-container-lowest text-on-surface">
+      <header className="shrink-0 flex items-center justify-between gap-3 px-3 sm:px-5 py-3 border-b border-white/10 bg-surface-container-low">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            type="button"
+            onClick={() => draft.guard(() => setSearchParams({}))}
+            className="p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-white/5"
+            aria-label={t("sermons.title")}
+            title={t("sermons.title")}
+          >
+            <span className="material-symbols-outlined">arrow_back</span>
+          </button>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold tracking-[0.08em] uppercase text-primary">
+              {sermonId ? "Edit sermon" : "New sermon"}
+            </p>
+            <p className="text-sm font-medium truncate">
+              {title.trim() || "Untitled sermon"}
+            </p>
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="hidden lg:inline text-[11px] text-on-surface-variant">
+            {dirty ? "Unsaved changes · ⌘S" : sermonId ? "All changes saved" : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((open) => !open)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold ${
+              detailsOpen
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-white/10 text-on-surface-variant hover:bg-white/5"
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">tune</span>
+            <span className="hidden sm:inline">Details</span>
+          </button>
+          {sermonId ? (
+            <button
+              type="button"
+              onClick={() =>
+                setDeletingSermon({
+                  id: sermonId,
+                  title: title.trim() || "Untitled sermon",
+                })
+              }
+              className="p-2 rounded-lg text-on-surface-variant hover:bg-error/10 hover:text-error"
+              aria-label="Delete sermon"
+            >
+              <span className="material-symbols-outlined text-[20px]">delete</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void save()}
+            className="flex items-center gap-1.5 px-4 sm:px-5 py-2 rounded-lg text-xs font-semibold bg-gradient-to-r from-primary-container to-secondary-container text-white shadow-lg hover:shadow-primary/20 active:scale-95 transition-all disabled:opacity-60"
+          >
+            <span className="material-symbols-outlined text-[16px]">
+              {saving ? "progress_activity" : "save"}
+            </span>
+            {saving ? "Saving…" : saved && !dirty ? "Saved" : "Save"}
+          </button>
+        </div>
+      </header>
 
-        {error ? <p className="mb-4 text-sm text-[#ffb4ab]">{error}</p> : null}
+      {error ? (
+        <p className="shrink-0 px-5 pt-3 text-sm text-[#ffb4ab]">{error}</p>
+      ) : null}
 
-        <div className="glass-panel rounded-xl p-4 sm:p-6 border-l-4 border-primary mb-6">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-8">
-              <label className="block text-[12px] font-semibold tracking-[0.05em] uppercase text-primary mb-2">
-                Sermon Title
-              </label>
-              <textarea
-                className="w-full bg-transparent border-b border-outline-variant/30 py-3 sm:py-4 text-[clamp(1.5rem,3vw,2rem)] font-semibold text-on-surface focus:border-primary focus:outline-none transition-all placeholder:opacity-30 resize-none leading-tight"
-                placeholder="Enter sermon title..."
-                rows={2}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+        <aside className="shrink-0 md:w-60 max-h-52 md:max-h-none border-b md:border-b-0 md:border-r border-white/10 flex flex-col min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-1">
+            <SlideRow
+              label="Title"
+              text={title.trim() || "Untitled sermon"}
+              selected={selectedKey === TITLE_KEY}
+              onClick={() => selectSlide(TITLE_KEY)}
+            />
+            {slides.map((slide) => {
+              const blank = isSermonSpace(slide.content);
+              return (
+                <SlideRow
+                  key={slide.id}
+                  label={blank ? "Blank" : `Point ${sermonPointNumber(slides, slide.id)}`}
+                  text={
+                    blank
+                      ? "Blank screen"
+                      : sermonPlainText(slide.content).trim() || "Empty point"
+                  }
+                  selected={selectedKey === slide.id}
+                  onClick={() => selectSlide(slide.id)}
+                />
+              );
+            })}
+          </div>
+          <div className="shrink-0 p-2 border-t border-white/10 grid grid-cols-5 gap-1">
+            <ToolButton icon="add" label="Add point" onClick={() => insertSlide("")} />
+            <ToolButton
+              icon="crop_landscape"
+              label="Add blank slide"
+              onClick={() => insertSlide(SERMON_SPACE)}
+            />
+            <ToolButton
+              icon="arrow_upward"
+              label="Move up"
+              disabled={selectedIndex <= 0}
+              onClick={() => moveSlide(-1)}
+            />
+            <ToolButton
+              icon="arrow_downward"
+              label="Move down"
+              disabled={selectedIndex < 0 || selectedIndex >= slides.length - 1}
+              onClick={() => moveSlide(1)}
+            />
+            <ToolButton
+              icon="delete"
+              label="Delete slide"
+              danger
+              disabled={!selectedSlide}
+              onClick={() => selectedSlide && requestDelete(selectedSlide)}
+            />
+          </div>
+        </aside>
+
+        <main className="flex-1 min-w-0 overflow-y-auto custom-scrollbar p-4 sm:p-6">
+          <div className="max-w-4xl mx-auto space-y-4">
+            <p className="text-[11px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
+              {selectedKey === TITLE_KEY
+                ? "Title slide · type the title and verse on the slide"
+                : editingPoint && selectedSlide
+                  ? `Point ${sermonPointNumber(slides, selectedSlide.id)} · click the slide to type`
+                  : "Blank slide · the screen stays empty here"}
+            </p>
+
+            {selectedKey === TITLE_KEY ? (
+              <StageTitleEditor
+                title={title}
+                verse={titleHolder?.verse ?? ""}
+                stageBg={stageBg}
+                onTitleChange={setTitle}
+                onVerseChange={
+                  titleHolder
+                    ? (next) => patchSlide(titleHolder.id, { verse: next })
+                    : undefined
+                }
+                versePlaceholder="Verse (optional) · Fil 3:14"
               />
+            ) : editingPoint && selectedSlide ? (
+              <StagePointEditor
+                value={selectedSlide.content}
+                syncNonce={syncNonce}
+                size={textSize}
+                stageBg={stageBg}
+                focusKey={focusKey}
+                placeholder="Type this point…"
+                onChange={(next) => patchSlide(selectedSlide.id, { content: next })}
+              />
+            ) : (
+              <ScaledStage stageBg={stageBg} highlight>
+                <div className="h-full w-full flex items-center justify-center">
+                  <span
+                    className={`text-[44px] uppercase tracking-[0.3em] ${
+                      stageUsesDarkText(stageBg) ? "text-black/30" : "text-white/30"
+                    }`}
+                  >
+                    Blank screen
+                  </span>
+                </div>
+              </ScaledStage>
+            )}
+
+            <div className="rounded-xl border border-white/10 bg-surface-container-low/60 p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
+                  Text size
+                </span>
+                <TextSizePicker value={textSize} onChange={setTextSize} />
+              </div>
+              {editingPoint && selectedSlide ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    patchSlide(selectedSlide.id, {
+                      content: insertSermonGap(selectedSlide.content),
+                    });
+                    setSyncNonce((n) => n + 1);
+                  }}
+                  className="inline-flex items-center gap-1 px-3 h-8 rounded-lg border border-white/10 hover:bg-white/5 text-[11px] font-semibold"
+                >
+                  <span className="material-symbols-outlined text-[16px]">space_bar</span>
+                  Add space
+                </button>
+              ) : null}
               <button
                 type="button"
-                onClick={() => {
-                  setPreviewTitleSlide(true);
-                  setPreviewSlideId(null);
-                }}
-                className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                onClick={() => insertSlide("")}
+                className="inline-flex items-center gap-1 px-3 h-8 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 text-[11px] font-semibold"
               >
-                <span className="material-symbols-outlined text-[16px]">visibility</span>
-                Preview title slide
+                <span className="material-symbols-outlined text-[16px]">add</span>
+                {selectedKey === TITLE_KEY ? "Add first point" : "Add next point"}
+              </button>
+              <span className="ml-auto text-[11px] text-on-surface-variant">
+                {projectedCount} slide{projectedCount === 1 ? "" : "s"} will project · ↑ ↓ to move
+                between slides
+              </span>
+            </div>
+          </div>
+        </main>
+
+        {detailsOpen ? (
+          <aside className="fixed inset-x-0 bottom-0 top-16 z-[60] md:static md:z-auto shrink-0 md:w-80 border-t md:border-t-0 md:border-l border-white/10 overflow-y-auto custom-scrollbar p-4 space-y-5 bg-surface-container-low">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary">
+                Details
+              </h3>
+              <button
+                type="button"
+                onClick={() => setDetailsOpen(false)}
+                className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-white/5"
+                aria-label="Close details"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
-            <div className="lg:col-span-4">
-              <label className="block text-[12px] font-semibold tracking-[0.05em] uppercase text-primary mb-2">
-                Primary Scripture
-              </label>
+            <p className="text-[11px] text-on-surface-variant -mt-3">
+              All optional. Only the slides are shown on screen.
+            </p>
+
+            <label className="block">
+              <span className={fieldLabel}>Main scripture</span>
               <input
-                className="w-full bg-transparent border-b border-outline-variant/30 py-3 sm:py-4 text-[clamp(1.125rem,2vw,1.5rem)] font-semibold text-on-surface focus:border-primary focus:outline-none"
+                className={fieldClass}
                 placeholder="e.g. John 4:23"
-                type="text"
                 value={scripture}
                 onChange={(event) => setScripture(event.target.value)}
               />
-              <p className="mt-2 text-xs text-on-surface-variant min-h-[1.25rem]">
+              <span className="mt-1.5 block text-[11px] text-on-surface-variant min-h-[1rem]">
                 {scriptureBusy
                   ? "Looking up KJV text…"
                   : scriptureHint || (scripturePreview ? "KJV • public domain" : "")}
-              </p>
+              </span>
               {scripturePreview ? (
-                <p className="mt-1 text-sm text-on-surface-variant leading-relaxed line-clamp-4">
+                <span className="mt-1 block text-xs text-on-surface-variant leading-relaxed line-clamp-4">
                   {scripturePreview}
-                </p>
+                </span>
               ) : null}
-            </div>
-          </div>
-        </div>
+            </label>
 
-        {superadmin ? (
-          <div className="glass-panel rounded-xl p-4 sm:p-6 mb-6">
-            <ChurchSharePicker
-              churches={churches}
-              value={churchIds}
-              onChange={setChurchIds}
-              label="Churches that can view this sermon"
-            />
-          </div>
-        ) : null}
+            <label className="block">
+              <span className={fieldLabel}>Speaker</span>
+              <input
+                className={fieldClass}
+                placeholder="Who is preaching"
+                value={speaker}
+                onChange={(event) => setSpeaker(event.target.value)}
+              />
+            </label>
 
-        <div className="grid grid-cols-12 gap-4 sm:gap-6">
-          <div className="col-span-12 lg:col-span-8 flex flex-col gap-4 sm:gap-6">
-            <section className="glass-panel rounded-xl flex flex-col min-h-[520px] overflow-hidden">
-              <div className="p-4 border-b border-outline-variant/10 bg-surface-container-low/50 flex items-center justify-between gap-3">
-                <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                  Transcription Flow
-                </h3>
-                <TextSizePicker value={textSize} onChange={setTextSize} />
-              </div>
-              <div className="flex-grow p-4 sm:p-6 notepad-lines">
-                <div className="space-y-6">
-                  {slides.map((slide, index) => {
-                    const hold = bindSlide(slide.id);
-                    const dragging = draggingId === slide.id;
-                    const showTitleVerse = slide.id === titlePointId;
-                    if (isSermonSpace(slide.content)) {
-                      return (
-                        <div
-                          key={slide.id}
-                          {...hold}
-                          className="relative group rounded-lg px-4 py-3 border border-dashed border-white/15 bg-white/5 flex items-center gap-3 ml-3 select-none touch-none cursor-grab active:cursor-grabbing"
-                        >
-                          <span className="text-on-surface-variant">
-                            <span className="material-symbols-outlined text-lg">
-                              drag_indicator
-                            </span>
-                          </span>
-                          <span className="material-symbols-outlined text-primary">
-                            space_bar
-                          </span>
-                          <span className="text-sm font-medium text-on-surface-variant">
-                            Space
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteSlideId(slide.id)}
-                            className="ml-auto text-on-surface-variant hover:text-error"
-                          >
-                            <span className="material-symbols-outlined text-lg">
-                              delete
-                            </span>
-                          </button>
-                        </div>
-                      );
-                    }
-                    return (
-                    <div
-                      key={slide.id}
-                      {...hold}
-                      className={`relative group bg-surface-container/20 rounded-lg p-4 sm:p-6 border border-outline-variant/10 hover:border-primary/30 transition-all ml-3 select-none touch-none ${
-                        dragging ? "cursor-grabbing" : "cursor-grab"
-                      }`}
-                    >
-                      <div className="absolute -left-3 top-6 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary ring-4 ring-surface-container-lowest">
-                        {String(index + 1).padStart(2, "0")}
-                      </div>
-                      <button
-                        type="button"
-                        data-hold-ignore
-                        onClick={() => openSlideEditor(slide.id)}
-                        className="w-full text-left min-h-[4.5rem]"
-                      >
-                        {slide.content.trim() ? (
-                          <p className="text-base sm:text-lg font-medium text-on-surface leading-relaxed whitespace-pre-wrap line-clamp-4">
-                            {slide.content}
-                          </p>
-                        ) : (
-                          <p className="text-base sm:text-lg font-medium text-on-surface-variant/30">
-                            Click to type this point…
-                          </p>
-                        )}
-                      </button>
-                      <div className="flex flex-wrap items-start gap-3 pt-2 border-t border-outline-variant/5">
-                        <span
-                          className="text-on-surface-variant hover:text-on-surface cursor-grab active:cursor-grabbing touch-none mt-1.5"
-                          aria-label="Hold and drag to reorder"
-                        >
-                          <span className="material-symbols-outlined text-lg">
-                            drag_indicator
-                          </span>
-                        </span>
-                        {showTitleVerse ? (
-                          <textarea
-                            rows={2}
-                            className="flex-1 min-w-[12rem] bg-surface-container-low px-3 py-2 rounded-xl border border-outline-variant/20 text-xs leading-relaxed resize-none"
-                            placeholder="Title verse..."
-                            value={slide.verse}
-                            onChange={(event) =>
-                              setSlides((prev) =>
-                                prev.map((row) =>
-                                  row.id === slide.id
-                                    ? { ...row, verse: event.target.value }
-                                    : row,
-                                ),
-                              )
-                            }
-                          ></textarea>
-                        ) : (
-                          <span className="flex-1 min-w-0" />
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFocusedSlideId(slide.id);
-                            setPreviewTitleSlide(false);
-                            setPreviewSlideId(slide.id);
-                          }}
-                          className="text-on-surface-variant hover:text-primary text-xs font-medium flex items-center gap-1 mt-1"
-                          title="Preview this point on stage"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">
-                            visibility
-                          </span>
-                          Preview
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFocusedSlideId(slide.id);
-                            setSlides((prev) =>
-                              prev.map((row) =>
-                                row.id === slide.id
-                                  ? { ...row, content: insertSermonGap(row.content) }
-                                  : row,
-                              ),
-                            );
-                          }}
-                          className="text-on-surface-variant hover:text-primary text-xs font-medium flex items-center gap-1 mt-1"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">
-                            space_bar
-                          </span>
-                          Space
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteSlideId(slide.id)}
-                          className="text-on-surface-variant hover:text-error mt-1"
-                        >
-                          <span className="material-symbols-outlined text-lg">
-                            delete
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                    );
-                  })}
-
-                  <div className="flex flex-col sm:flex-row gap-4 mt-8">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const id = `new-${Date.now()}`;
-                        setSlides((prev) => [
-                          ...prev,
-                          { id, content: "", verse: "" },
-                        ]);
-                        openSlideEditor(id);
-                      }}
-                      className="flex-1 border-2 border-dashed border-outline-variant/20 rounded-xl py-8 flex flex-col items-center justify-center text-on-surface-variant hover:border-primary/40 hover:bg-primary/5 hover:text-primary transition-all"
-                    >
-                      <span className="material-symbols-outlined text-2xl mb-2">
-                        add_circle
-                      </span>
-                      <span className="font-bold text-sm uppercase tracking-wider">
-                        Add New Slide
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const targetId =
-                          focusedSlideId &&
-                          slides.some(
-                            (row) =>
-                              row.id === focusedSlideId &&
-                              !isSermonSpace(row.content),
-                          )
-                            ? focusedSlideId
-                            : [...slides]
-                                .reverse()
-                                .find((row) => !isSermonSpace(row.content))?.id;
-                        if (!targetId) return;
-                        setSlides((prev) =>
-                          prev.map((row) =>
-                            row.id === targetId
-                              ? { ...row, content: insertSermonGap(row.content) }
-                              : row,
-                          ),
-                        );
-                      }}
-                      className="flex-1 border-2 border-dashed border-outline-variant/20 rounded-xl py-8 flex flex-col items-center justify-center text-on-surface-variant hover:border-primary/40 hover:bg-primary/5 hover:text-primary transition-all"
-                    >
-                      <span className="material-symbols-outlined text-2xl mb-2">
-                        space_bar
-                      </span>
-                      <span className="font-bold text-sm uppercase tracking-wider">
-                        Add Space
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setNotes((prev) => [...prev, ""])}
-                      className="flex-1 border-2 border-dashed border-outline-variant/20 rounded-xl py-8 flex flex-col items-center justify-center text-on-surface-variant hover:border-secondary/40 hover:bg-secondary/5 hover:text-secondary transition-all"
-                    >
-                      <span className="material-symbols-outlined text-2xl mb-2">
-                        sticky_note_2
-                      </span>
-                      <span className="font-bold text-sm uppercase tracking-wider">
-                        Add Private Note
-                      </span>
-                    </button>
-                  </div>
-                  {notes.map((note, index) => (
-                    <textarea
-                      key={index}
-                      value={note}
-                      onChange={(event) =>
-                        setNotes((prev) =>
-                          prev.map((row, i) =>
-                            i === index ? event.target.value : row,
-                          ),
-                        )
-                      }
-                      className="w-full bg-surface-container/30 border border-white/10 rounded-lg p-4 text-sm"
-                      placeholder="Private note — never projected"
-                      rows={2}
-                    />
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <section className="glass-panel rounded-xl p-4 sm:p-6">
-              <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary mb-4">
-                Metadata
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className={fieldLabel}>Date</span>
                 <input
-                  className="w-full bg-surface-container-lowest border border-outline-variant/30 rounded-lg py-3 px-4 text-sm"
-                  placeholder="Speaker"
-                  value={speaker}
-                  onChange={(event) => setSpeaker(event.target.value)}
-                />
-                <input
-                  className="w-full bg-surface-container-lowest border border-outline-variant/30 rounded-lg py-3 px-4 text-sm"
+                  className={fieldClass}
                   type="date"
                   value={date}
                   onChange={(event) => setDate(event.target.value)}
                 />
+              </label>
+              <label className="block">
+                <span className={fieldLabel}>Length</span>
                 <input
-                  className="w-full bg-surface-container-lowest border border-outline-variant/30 rounded-lg py-3 px-4 text-sm"
-                  placeholder="Duration (35:00)"
+                  className={fieldClass}
+                  placeholder="35:00"
                   value={duration}
                   onChange={(event) => setDuration(event.target.value)}
                 />
-              </div>
+              </label>
+            </div>
+
+            <label className="block">
+              <span className={fieldLabel}>Series</span>
               <input
-                className="mt-4 w-full bg-surface-container-lowest border border-outline-variant/30 rounded-lg py-3 px-4 text-sm"
+                className={fieldClass}
                 placeholder="Series name"
                 value={series}
                 onChange={(event) => setSeries(event.target.value)}
               />
-            </section>
-          </div>
+            </label>
 
-          <div className="col-span-12 lg:col-span-4 space-y-4 sm:space-y-6">
-            <section className="glass-panel rounded-xl p-4 sm:p-6">
-              <div className="flex items-center justify-between gap-3 mb-3">
-                <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary">
-                  Stage preview
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (focusedPoint) {
-                      setPreviewTitleSlide(false);
-                      setPreviewSlideId(focusedPoint.id);
-                    } else {
-                      setPreviewTitleSlide(true);
-                      setPreviewSlideId(null);
-                    }
-                  }}
-                  className="text-xs font-medium text-primary hover:underline"
-                >
-                  Enlarge
-                </button>
-              </div>
-              <SermonStagePreview cue={sidePreviewCue} />
-              <p className="mt-2 text-[11px] text-on-surface-variant">
-                {focusedPoint
-                  ? `Point ${String(sermonPointNumber(slides, focusedPoint.id)).padStart(2, "0")} · ${title.trim() || "Untitled"}`
-                  : "Title slide"}
-              </p>
-            </section>
-            <section className="glass-panel rounded-xl p-4 sm:p-6">
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary">
-                  {t("sermons.title")}
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => draft.guard(startNew)}
-                  className="text-xs font-medium text-primary hover:underline"
-                >
-                  {t("sermons.new")}
-                </button>
-              </div>
-              <div className="space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">
-                {visibleLibrary.map((row) => {
-                  const selected = sermonId === row.id;
-                  return (
-                    <div
-                      key={row.id}
-                      className={`relative group rounded-lg border transition-colors ${
-                        selected
-                          ? "bg-primary/15 border-primary/30 text-on-surface"
-                          : "bg-surface-container-low border-white/5 text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (row.id === sermonId) return;
-                          draft.guard(() => {
-                            void openSermon(row.id).catch((err) =>
-                              setError(
-                                err instanceof Error
-                                  ? err.message
-                                  : "Could not open sermon.",
-                              ),
-                            );
-                          });
-                        }}
-                        className="w-full text-left px-3 py-3 pr-10"
-                      >
-                        <p className="text-sm font-medium break-words whitespace-pre-wrap">
-                          {row.title}
-                        </p>
-                        <p className="text-[11px] opacity-70 truncate mt-0.5">
-                          {[row.primary_scripture, row.speaker_name]
-                            .filter(Boolean)
-                            .join(" • ") || t("sermons.draft")}
-                        </p>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDeletingSermon({ id: row.id, title: row.title })
-                        }
-                        className="absolute top-2.5 right-2 p-1 rounded-md text-on-surface-variant hover:text-error hover:bg-error/10"
-                        aria-label={`Delete ${row.title}`}
-                      >
-                        <span className="material-symbols-outlined text-[18px]">
-                          delete
-                        </span>
-                      </button>
-                    </div>
-                  );
-                })}
-                {library.length === 0 ? (
-                  <p className="text-sm text-on-surface-variant">
-                    No sermons yet. Save this draft to start your library.
-                  </p>
-                ) : visibleLibrary.length === 0 ? (
-                  <p className="text-sm text-on-surface-variant">
-                    No sermons match “{query.trim()}”.
-                  </p>
-                ) : null}
-              </div>
-            </section>
-            <section className="glass-panel rounded-xl p-4 sm:p-6 border-l-4 border-primary">
-              <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary mb-1">
-                Production Status
-              </h3>
-              <p className="text-sm text-on-surface">
-                {sermonId ? "Saved and ready for a setlist." : "Unsaved draft."}
-              </p>
-              <p className="text-[10px] text-on-surface-variant mt-3 leading-relaxed">
-                {slides.filter((slide) => slide.content.trim()).length} slides will
-                project. Private notes stay off the output window.
-              </p>
-            </section>
-          </div>
-        </div>
-      </div>
-
-      <Modal
-        open={Boolean(editingSlideId && editingSlide)}
-        onClose={() => setEditingSlideId(null)}
-        labelledBy="slide-editor-title"
-        panelClassName="w-[min(960px,94vw)] h-[min(88vh,860px)] flex flex-col rounded-2xl"
-        backdropClassName="bg-black/75 backdrop-blur-md"
-        bare
-      >
-        {editingSlide ? (
-          <div className="flex flex-col h-full min-h-0 bg-surface-container-lowest rounded-2xl border border-white/10 overflow-hidden">
-            <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
-              <div>
-                <p
-                  id="slide-editor-title"
-                  className="text-[12px] font-semibold tracking-[0.08em] uppercase text-on-surface-variant"
-                >
-                  Point {String((editingIndex >= 0 ? editingIndex : 0) + 1).padStart(2, "0")}
-                </p>
-                <p className="text-sm text-on-surface-variant/80">
-                  Type here, then Done or Esc.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFocusedSlideId(editingSlide.id);
-                    setPreviewTitleSlide(false);
-                    setPreviewSlideId(editingSlide.id);
-                  }}
-                  className="px-3 py-2 rounded-lg text-xs font-medium text-on-surface-variant hover:text-primary hover:bg-white/5 flex items-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-[16px]">
-                    visibility
-                  </span>
-                  Preview
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSlides((prev) =>
-                      prev.map((row) =>
-                        row.id === editingSlide.id
-                          ? { ...row, content: insertSermonGap(row.content) }
-                          : row,
-                      ),
-                    )
-                  }
-                  className="px-3 py-2 rounded-lg text-xs font-medium text-on-surface-variant hover:text-primary hover:bg-white/5"
-                >
-                  Space
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingSlideId(null)}
-                  className="px-4 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold"
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-            <textarea
-              ref={editorRef}
-              value={editingSlide.content}
-              onChange={(event) => {
-                const value = event.target.value;
-                setSlides((prev) =>
-                  prev.map((row) =>
-                    row.id === editingSlide.id ? { ...row, content: value } : row,
-                  ),
-                );
-              }}
-              className="flex-1 min-h-0 w-full bg-transparent px-5 py-5 text-xl sm:text-2xl font-medium leading-relaxed text-on-surface resize-none focus:outline-none placeholder:text-on-surface-variant/30"
-              placeholder="Main slide content or talking point…"
-            />
-            {editingSlide.id ===
-            slides.find((row) => !isSermonSpace(row.content))?.id ? (
-              <div className="shrink-0 px-5 py-4 border-t border-white/10">
-                <textarea
-                  rows={3}
-                  className="w-full bg-surface-container-low px-4 py-3 rounded-xl border border-white/10 text-sm leading-relaxed resize-none"
-                  placeholder="Title verse…"
-                  value={editingSlide.verse}
-                  onChange={(event) =>
-                    setSlides((prev) =>
-                      prev.map((row) =>
-                        row.id === editingSlide.id
-                          ? { ...row, verse: event.target.value }
-                          : row,
-                      ),
-                    )
-                  }
-                ></textarea>
-              </div>
+            {superadmin ? (
+              <ChurchSharePicker
+                churches={churches}
+                value={churchIds}
+                onChange={setChurchIds}
+                label="Churches that can view this sermon"
+              />
             ) : null}
-          </div>
-        ) : null}
-      </Modal>
 
-      <Modal
-        open={Boolean(modalPreviewCue)}
-        onClose={() => {
-          setPreviewSlideId(null);
-          setPreviewTitleSlide(false);
-        }}
-        labelledBy="sermon-preview-title"
-        panelClassName="w-[min(1100px,96vw)] rounded-2xl"
-        backdropClassName="bg-black/80 backdrop-blur-md"
-        bare
-      >
-        {modalPreviewCue ? (
-          <div className="bg-surface-container-lowest rounded-2xl border border-white/10 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-white/10">
-              <p
-                id="sermon-preview-title"
-                className="text-[12px] font-semibold tracking-[0.08em] uppercase text-on-surface-variant"
-              >
-                {previewTitleSlide ? "Title slide" : modalPreviewCue.label} preview
-              </p>
+            <div className="space-y-2">
+              <span className={fieldLabel}>Private notes</span>
+              {notes.map((note, index) => (
+                <div key={index} className="relative">
+                  <textarea
+                    value={note}
+                    onChange={(event) =>
+                      setNotes((prev) =>
+                        prev.map((row, i) => (i === index ? event.target.value : row)),
+                      )
+                    }
+                    className={`${fieldClass} pr-9 resize-none`}
+                    placeholder="Never shown on screen"
+                    rows={2}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setNotes((prev) => prev.filter((_, i) => i !== index))}
+                    className="absolute top-2 right-2 p-1 rounded text-on-surface-variant hover:text-error"
+                    aria-label="Remove note"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">close</span>
+                  </button>
+                </div>
+              ))}
               <button
                 type="button"
-                onClick={() => {
-                  setPreviewSlideId(null);
-                  setPreviewTitleSlide(false);
-                }}
-                className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-white/5"
-                aria-label="Close preview"
+                onClick={() => setNotes((prev) => [...prev, ""])}
+                className="w-full flex items-center justify-center gap-1 py-2 rounded-lg border border-dashed border-white/15 text-xs text-on-surface-variant hover:text-secondary hover:border-secondary/40"
               >
-                <span className="material-symbols-outlined">close</span>
+                <span className="material-symbols-outlined text-[16px]">sticky_note_2</span>
+                Add private note
               </button>
             </div>
-            <div className="p-4">
-              <SermonStagePreview cue={modalPreviewCue} />
-              {title.trim() ? (
-                <p className="mt-3 text-sm text-on-surface leading-relaxed break-words whitespace-pre-wrap">
-                  {title}
-                </p>
-              ) : null}
-            </div>
-          </div>
+          </aside>
         ) : null}
-      </Modal>
+      </div>
 
       <ConfirmDialog
         open={Boolean(deletingSlide)}
-        title="Delete Slide?"
-        description="Are you sure you want to delete this slide? This action cannot be undone."
+        title="Delete this slide?"
+        description="It is removed when you save the sermon."
+        highlight={
+          deletingSlide ? sermonPlainText(deletingSlide.content).slice(0, 80) : undefined
+        }
         onClose={() => setDeleteSlideId(null)}
         onConfirm={() => {
-          if (deleteSlideId === editingSlideId) setEditingSlideId(null);
-          setSlides((prev) => prev.filter((slide) => slide.id !== deleteSlideId));
+          if (deleteSlideId) removeSlide(deleteSlideId);
           setDeleteSlideId(null);
         }}
       />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import AddServiceItemModal from "../../components/modals/AddServiceItemModal";
 import ConfirmDialog from "../../components/modals/ConfirmDialog";
@@ -65,12 +65,13 @@ export default function Setlists() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [error, setError] = useState("");
   const [superadmin, setSuperadmin] = useState(false);
   const [churches, setChurches] = useState<ChurchName[]>([]);
   const [viewChurchId, setViewChurchId] = useState(readSetlistViewChurchId);
   const [showArchive, setShowArchive] = useState(false);
+  const showArchiveRef = useRef(false);
+  showArchiveRef.current = showArchive;
   const [canManage, setCanManage] = useState(false);
   const [preferredId, setPreferredId] = useState(readPreferredSetlistId);
   const openSetlist = async (id: string, replace = false) => {
@@ -91,7 +92,7 @@ export default function Setlists() {
     asAdmin = superadmin,
     nextOffset = 0,
     append = false,
-    archived = showArchive,
+    archived = showArchiveRef.current,
     options?: { autoOpen?: boolean },
   ) => {
     if (append) setLoadingMore(true);
@@ -104,7 +105,6 @@ export default function Setlists() {
         archived,
       });
       setTotal(page.total);
-      setOffset(nextOffset);
       setSetlists((prev) => (append ? [...prev, ...page.items] : page.items));
       if (!autoOpen) {
         setActive(null);
@@ -112,11 +112,10 @@ export default function Setlists() {
       }
       const fromUrl = searchParams.get("setlist");
       const preferred = readPreferredSetlistId();
+      // A URL setlist may live in the other tab (e.g. archived), so open it even if it isn't listed.
       const id =
         preferId ||
-        (fromUrl && page.items.some((row) => row.id === fromUrl)
-          ? fromUrl
-          : null) ||
+        fromUrl ||
         (preferred && page.items.some((row) => row.id === preferred)
           ? preferred
           : null);
@@ -141,6 +140,7 @@ export default function Setlists() {
   const switchSetlistTab = (archived: boolean) => {
     if (archived === showArchive) return;
     setShowArchive(archived);
+    showArchiveRef.current = archived;
     setActive(null);
     setSearchParams({}, { replace: true });
     setLoading(true);
@@ -224,13 +224,20 @@ export default function Setlists() {
   useEffect(() => {
     const id = searchParams.get("setlist");
     if (!id || loading || id === active?.id) return;
-    if (!setlists.some((row) => row.id === id)) return;
+    let cancelled = false;
     void getSetlist(id)
-      .then(setActive)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : t("setlists.openError")),
-      );
-  }, [searchParams, loading, active?.id, setlists]);
+      .then((next) => {
+        if (!cancelled) setActive(next);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : t("setlists.openError"));
+        setSearchParams({}, { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, loading, active?.id]);
 
   const applyForm = async (values: SetlistFormValues, isCreate: boolean) => {
     if (!canManage) {
@@ -539,14 +546,14 @@ export default function Setlists() {
           <LoadMoreBar
             shown={setlists.length}
             total={total}
-            hasMore={offset + setlists.length < total}
+            hasMore={setlists.length < total}
             loading={loadingMore}
             onMore={() => {
               void loadList(
                 undefined,
                 viewChurchId,
                 superadmin,
-                offset + PAGE_SIZE,
+                setlists.length,
                 true,
               ).catch((err) => {
                 const message =

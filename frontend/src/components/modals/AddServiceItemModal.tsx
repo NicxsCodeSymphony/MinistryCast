@@ -89,7 +89,7 @@ export default function AddServiceItemModal({
     if (step !== "song") requestCloseRef.current = onClose;
   }, [onClose, step]);
 
-  const compact = step === "picker" || step === "roster";
+  const compact = step === "picker" || step === "roster" || step === "sermon";
 
   return (
     <Modal
@@ -98,9 +98,11 @@ export default function AddServiceItemModal({
       labelledBy={step === "picker" ? titleId : undefined}
       bare={!compact}
       panelClassName={
-        compact
-          ? "w-full max-w-2xl rounded-xl flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
-          : "w-full max-w-none h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] rounded-2xl flex flex-col bg-surface-container/70 backdrop-blur-2xl border border-white/10"
+        step === "sermon"
+          ? "w-full max-w-lg max-h-[min(640px,calc(100vh-2rem))] rounded-2xl flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+          : compact
+            ? "w-full max-w-2xl rounded-xl flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+            : "w-full max-w-none h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] rounded-2xl flex flex-col bg-surface-container/70 backdrop-blur-2xl border border-white/10"
       }
       backdropClassName={
         compact

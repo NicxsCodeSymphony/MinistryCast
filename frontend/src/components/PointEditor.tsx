@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   POINT_COLORS,
   editableToStored,
@@ -10,9 +10,18 @@ type PointEditorProps = {
   onChange: (next: string) => void;
   placeholder?: string;
   expanded?: boolean;
+  tall?: boolean;
   syncNonce?: number;
   readOnly?: boolean;
   onFocusChange?: (focused: boolean) => void;
+  /** Put the formatting buttons under the text instead of above it. */
+  toolbarBelow?: boolean;
+  /** Replaces the default boxed look of the editable area (e.g. to style it like the stage). */
+  editorClassName?: string;
+  editorStyle?: CSSProperties;
+  /** Wraps the editable area, e.g. in a stage-shaped frame. */
+  frame?: (editor: ReactNode) => ReactNode;
+  onInput?: () => void;
 };
 
 type FormatKind = "bold" | "italic" | "underline" | "color";
@@ -22,9 +31,15 @@ export default function PointEditor({
   onChange,
   placeholder = "Sermon point…",
   expanded = false,
+  tall = false,
   syncNonce = 0,
   readOnly = false,
   onFocusChange,
+  toolbarBelow = false,
+  editorClassName,
+  editorStyle,
+  frame,
+  onInput,
 }: PointEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const focusedRef = useRef(false);
@@ -88,8 +103,7 @@ export default function PointEditor({
     flush();
   };
 
-  return (
-    <div className={`space-y-2 ${readOnly ? "opacity-60" : ""}`}>
+  const toolbar = (
       <div
         className="flex flex-wrap items-center gap-1"
         onMouseDown={(event) => {
@@ -171,6 +185,9 @@ export default function PointEditor({
           />
         </label>
       </div>
+  );
+
+  const editor = (
       <div
         ref={editorRef}
         role="textbox"
@@ -196,6 +213,7 @@ export default function PointEditor({
           if (readOnly) return;
           rememberRange();
           flush();
+          onInput?.();
         }}
         onKeyDown={(event) => {
           if (readOnly) {
@@ -211,14 +229,33 @@ export default function PointEditor({
             applyFormat(key === "b" ? "bold" : key === "i" ? "italic" : "underline");
           }
         }}
-        className={`point-editor w-full bg-surface-container-low border border-white/10 rounded-lg p-3 text-sm text-on-surface focus:outline-none focus:border-primary/50 overflow-y-auto custom-scrollbar ${
-          expanded ? "min-h-[220px] max-h-[46vh]" : "min-h-[120px] max-h-[28vh]"
+        style={editorStyle}
+        className={`point-editor focus:outline-none ${
+          editorClassName ??
+          `w-full bg-surface-container-low border border-white/10 rounded-lg text-on-surface focus:border-primary/50 overflow-y-auto custom-scrollbar ${
+            tall
+              ? "p-5 text-lg leading-relaxed min-h-[40vh] max-h-[58vh]"
+              : expanded
+                ? "p-3 text-sm min-h-[220px] max-h-[46vh]"
+                : "p-3 text-sm min-h-[120px] max-h-[28vh]"
+          }`
         }`}
       />
-      <p className="text-[10px] text-on-surface-variant">
-        Select words, then bold, italic, underline, or a color. Shortcuts: ⌘B
-        ⌘I ⌘U. Click an underlined verse to open it.
-      </p>
+  );
+
+  const hint = (
+    <p className="text-[10px] text-on-surface-variant">
+      Select words, then bold, italic, underline, or a color. Shortcuts: ⌘B
+      ⌘I ⌘U. Click an underlined verse to open it.
+    </p>
+  );
+
+  return (
+    <div className={`space-y-2 ${readOnly ? "opacity-60" : ""}`}>
+      {toolbarBelow ? null : toolbar}
+      {frame ? frame(editor) : editor}
+      {toolbarBelow ? toolbar : null}
+      {hint}
     </div>
   );
 }

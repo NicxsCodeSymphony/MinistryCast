@@ -56,7 +56,6 @@ export default function SongSelectPanel({
   const [debounced, setDebounced] = useState("");
   const [songs, setSongs] = useState<Song[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [previewId, setPreviewId] = useState("");
   const [pickedIds, setPickedIds] = useState<string[]>([]);
   const [keptIds, setKeptIds] = useState<string[]>(originIds);
@@ -64,40 +63,74 @@ export default function SongSelectPanel({
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pickedSongs, setPickedSongs] = useState<Record<string, Song>>({});
   const persistSave = useRef<() => Promise<boolean>>(async () => true);
+  const loadedCount = useRef(0);
+  const loadSeq = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(query), 250);
     return () => window.clearTimeout(id);
   }, [query]);
 
-  const load = async (nextOffset: number, append: boolean) => {
-    if (append) setLoadingMore(true);
-    else setLoading(true);
+  const load = async (
+    mode: "reset" | "refresh" | "more",
+    search = debounced,
+  ) => {
+    const seq = ++loadSeq.current;
+    if (mode === "more") setLoadingMore(true);
+    else if (mode === "reset") setLoading(true);
     try {
-      const page = await listSongs({
-        query: debounced,
-        offset: nextOffset,
-        limit: PAGE_SIZE,
-      });
+      const start = mode === "more" ? loadedCount.current : 0;
+      const limit =
+        mode === "refresh" ? Math.max(PAGE_SIZE, loadedCount.current) : PAGE_SIZE;
+      const page = await listSongs({ query: search, offset: start, limit });
+      if (seq !== loadSeq.current) return;
       setTotal(page.total);
-      setOffset(nextOffset);
-      setSongs((prev) => (append ? [...prev, ...page.items] : page.items));
-      if (!append) setPreviewId(page.items[0]?.id ?? "");
+      setSongs((prev) => {
+        const next = mode === "more" ? [...prev, ...page.items] : page.items;
+        loadedCount.current = next.length;
+        return next;
+      });
+      if (mode === "reset") setPreviewId(page.items[0]?.id ?? "");
     } catch (err) {
+      if (seq !== loadSeq.current) return;
       setError(err instanceof Error ? err.message : "Could not load songs.");
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (seq === loadSeq.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   };
 
   useEffect(() => {
-    void load(0, false);
+    loadedCount.current = 0;
+    void load("reset", debounced);
     return subscribeContent(() => {
-      void load(0, false);
+      void load("refresh", debounced);
     });
   }, [debounced]);
+
+  const hasMore = songs.length < total;
+
+  useEffect(() => {
+    const root = listRef.current;
+    const target = sentinelRef.current;
+    if (!root || !target || !hasMore || loading) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting) && !loadingMore) {
+          void load("more");
+        }
+      },
+      { root, rootMargin: "200px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, loading, loadingMore, songs.length, debounced]);
 
   const selected = useMemo(
     () => songs.find((song) => song.id === previewId) ?? songs[0],
@@ -128,9 +161,8 @@ export default function SongSelectPanel({
     setSaving(true);
     try {
       if (toRemove.length) await onRemoveSongs?.(toRemove);
-      const byId = new Map(songs.map((song) => [song.id, song]));
       const toAdd = toAddIds
-        .map((id) => byId.get(id))
+        .map((id) => pickedSongs[id])
         .filter((song): song is Song => Boolean(song));
       if (toAdd.length) {
         const items = toAdd.map(toServiceItem);
@@ -138,6 +170,7 @@ export default function SongSelectPanel({
         else for (const item of items) await onAdd(item);
       }
       setPickedIds([]);
+      setPickedSongs({});
       setKeptIds([...toKeep, ...toAddIds]);
       return true;
     } finally {
@@ -172,11 +205,16 @@ export default function SongSelectPanel({
       );
       return;
     }
+    setPickedSongs((prev) => ({ ...prev, [song.id]: song }));
     setPickedIds((prev) =>
       prev.includes(song.id)
         ? prev.filter((id) => id !== song.id)
         : [...prev, song.id],
     );
+  };
+
+  const unpick = (id: string) => {
+    setPickedIds((prev) => prev.filter((row) => row !== id));
   };
 
   const finish = async () => {
@@ -237,7 +275,31 @@ export default function SongSelectPanel({
 
       <div className="flex-1 overflow-hidden flex flex-col lg:flex-row min-h-0">
         <div className="flex-1 flex flex-col border-r border-white/10 min-h-0">
-          <div className="flex-1 overflow-y-auto p-6 gap-2 flex flex-col custom-scrollbar">
+          {pickedIds.length ? (
+            <div className="px-6 pt-4 flex flex-wrap gap-2 shrink-0">
+              {pickedIds.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => unpick(id)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-primary/15 border border-primary/30 px-3 py-1 text-xs text-on-surface"
+                  title="Remove from picks"
+                >
+                  <span className="font-bold tabular-nums text-primary">
+                    {numberById[id]}
+                  </span>
+                  <span className="max-w-[12rem] truncate">
+                    {pickedSongs[id]?.title ?? "Song"}
+                  </span>
+                  <span className="material-symbols-outlined text-[14px]">close</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div
+            ref={listRef}
+            className="flex-1 overflow-y-auto p-6 gap-2 flex flex-col custom-scrollbar"
+          >
             {error ? <p className="text-sm text-[#ffb4ab]">{error}</p> : null}
             {loading ? <TableSkeleton rows={5} /> : null}
             {!loading &&
@@ -300,18 +362,22 @@ export default function SongSelectPanel({
               })}
             {!loading && songs.length === 0 ? (
               <p className="text-sm text-on-surface-variant text-center py-12">
-                No songs in the library yet.
+                {debounced.trim() ? "No songs match that search." : "No songs in the library yet."}
               </p>
             ) : null}
-            {offset + songs.length < total ? (
-              <button
-                type="button"
-                disabled={loadingMore}
-                onClick={() => void load(offset + PAGE_SIZE, true)}
-                className="py-2 text-sm text-primary"
-              >
-                {loadingMore ? "Loading…" : "Load more"}
-              </button>
+            {!loading && hasMore ? (
+              <div ref={sentinelRef} className="py-2 flex justify-center">
+                <button
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() => void load("more")}
+                  className="text-sm text-primary"
+                >
+                  {loadingMore
+                    ? "Loading…"
+                    : `Load more (${songs.length} of ${total})`}
+                </button>
+              </div>
             ) : null}
           </div>
           <div className="lg:hidden p-4 border-t border-white/10">

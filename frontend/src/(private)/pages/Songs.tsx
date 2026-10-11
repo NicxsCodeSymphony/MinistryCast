@@ -63,7 +63,9 @@ export default function Songs() {
   const [params, setParams] = useSearchParams();
   const [library, setLibrary] = useState<Song[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
+  const loadedCount = useRef(0);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const [selectedId, setSelectedId] = useState("");
   const [languages, setLanguages] = useState<Language[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -87,29 +89,34 @@ export default function Songs() {
   useEffect(() => {
     const id = window.setTimeout(() => {
       setDebounced(query);
-      setOffset(0);
     }, 250);
     return () => window.clearTimeout(id);
   }, [query]);
 
-  const load = async (nextOffset: number, append: boolean) => {
+  /** reset: first page · refresh: re-read everything already shown · more: next page */
+  const load = async (mode: "reset" | "refresh" | "more" = "reset") => {
+    const append = mode === "more";
     if (append) setLoadingMore(true);
-    else setLoading(true);
+    else if (mode === "reset") setLoading(true);
     setError("");
     const requestId = ++loadRequestId.current;
     try {
+      const shown = loadedCount.current;
       const page = await listSongs({
         query: debounced,
         categoryId,
         languageId,
-        offset: nextOffset,
-        limit: PAGE_SIZE,
+        offset: append ? shown : 0,
+        limit: mode === "refresh" ? Math.max(PAGE_SIZE, shown) : PAGE_SIZE,
       });
       if (requestId !== loadRequestId.current) return;
       setTotal(page.total);
-      setOffset(nextOffset);
-      setLibrary((prev) => (append ? [...prev, ...page.items] : page.items));
-      if (!append) {
+      setLibrary((prev) => {
+        const next = append ? [...prev, ...page.items] : page.items;
+        loadedCount.current = next.length;
+        return next;
+      });
+      if (mode === "reset") {
         const want = params.get("song");
         const fromUrl = want
           ? page.items.find((row) => row.id === want)
@@ -131,7 +138,7 @@ export default function Songs() {
   const refreshWorkspace = async (churchId?: string) => {
     const id = churchId || (await requireChurchId());
     // Soft refresh: keep showing local songs while catalog updates in background.
-    await load(0, false);
+    await load("reset");
     void reloadChurchCatalog(id)
       .then(async () => {
         const [cats, langs] = await Promise.all([
@@ -140,7 +147,7 @@ export default function Songs() {
         ]);
         setCategories(cats);
         setLanguages(langs);
-        await load(0, false);
+        await load("refresh");
       })
       .catch(() => undefined);
   };
@@ -177,9 +184,10 @@ export default function Songs() {
   }, []);
 
   useEffect(() => {
-    void load(0, false);
+    loadedCount.current = 0;
+    void load("reset");
     return subscribeContent(() => {
-      void load(0, false);
+      void load("refresh");
     });
   }, [debounced, categoryId, languageId]);
 
@@ -230,12 +238,26 @@ export default function Songs() {
         ? await updateSong(selected.id, payload)
         : await createSong(payload);
     setFormOpen(false);
-    await load(0, false);
+    await load("refresh");
     setSelectedId(next.id);
     toast.success(formMode === "edit" ? "Song updated." : "Song added.");
   };
 
-  const hasMore = offset + library.length < total;
+  const hasMore = library.length < total;
+
+  useEffect(() => {
+    const root = listScrollRef.current;
+    const target = loadMoreRef.current;
+    if (!root || !target || !hasMore || loading || loadingMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void load("more");
+      },
+      { root, rootMargin: "240px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, loading, loadingMore, library.length]);
 
   return (
     <main className="h-full overflow-hidden flex flex-col lg:flex-row">
@@ -386,7 +408,10 @@ export default function Songs() {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto glass-card rounded-xl border border-white/5 custom-scrollbar">
+        <div
+          ref={listScrollRef}
+          className="flex-1 min-h-0 overflow-auto glass-card rounded-xl border border-white/5 custom-scrollbar"
+        >
           {loading ? (
             <TableSkeleton />
           ) : (
@@ -473,15 +498,15 @@ export default function Songs() {
               </tbody>
             </table>
           )}
-          {hasMore ? (
-            <div className="p-4 flex justify-center">
+          {hasMore && !loading ? (
+            <div ref={loadMoreRef} className="p-4 flex justify-center">
               <button
                 type="button"
                 disabled={loadingMore}
-                onClick={() => void load(offset + PAGE_SIZE, true)}
+                onClick={() => void load("more")}
                 className="px-4 py-2 rounded-lg border border-white/10 text-sm hover:bg-white/5 disabled:opacity-50"
               >
-                {loadingMore ? "Loading…" : "Load more"}
+                {loadingMore ? "Loading…" : `Load more (${library.length} of ${total})`}
               </button>
             </div>
           ) : null}
@@ -633,7 +658,7 @@ export default function Songs() {
           try {
             await deleteSong(selected.id);
             setDeleteOpen(false);
-            await load(0, false);
+            await load("refresh");
             toast.success("Song deleted.");
           } catch (err) {
             const message =

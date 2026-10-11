@@ -1,4 +1,5 @@
 import {
+  bibleTranslationLabel,
   fetchBibleChapter,
   formatBibleReference,
   isFreeBibleTranslation,
@@ -12,6 +13,7 @@ import {
 import {
   asError,
   coerceLyricSections,
+  DEFAULT_SERMON_TEXT_SIZE,
   formatDuration,
   formatSectionLabel,
   isSermonSpace,
@@ -21,7 +23,10 @@ import {
   sermonDisplayLines,
   splitLyricLines,
 } from "./helpers";
+import { chordSheetToInline, stripChordProMarkers } from "./chords";
+import { DEFAULT_STAGE_TEXT_SIZE } from "./lyricTextStyle";
 import { formatRosterDate, normalizeRoster, type RosterPayload } from "./roster";
+import { asScripturePayload, type ScripturePayload } from "./scripturePayload";
 import { sermonPlainText } from "./sermonMarkup";
 import { asStageBackground } from "./stageBackgrounds";
 import { PAGE_SIZE } from "./types";
@@ -531,6 +536,51 @@ export async function updateSong(id: string, input: SongInput) {
   return getSong(id);
 }
 
+/**
+ * Save edited lyric sections in place. Unlike `updateSong`, rows keep their ids so a section
+ * that is live on screen stays live after saving.
+ */
+export async function saveSongSections(
+  songId: string,
+  sections: { id?: string | null; section: string; content: string }[],
+) {
+  const churchId = await ready();
+  const existing = (
+    await listRows<SongLyricSection>(churchId, "song_lyric_sections")
+  ).filter((row) => row.song_id === songId);
+  const byId = new Map(existing.map((row) => [row.id, row]));
+  const keep = new Set<string>();
+  const now = stamp();
+  for (const [index, block] of sections.entries()) {
+    const prev = block.id ? byId.get(block.id) : undefined;
+    const id = prev?.id ?? newId();
+    keep.add(id);
+    if (
+      prev &&
+      prev.section === block.section &&
+      prev.content === block.content &&
+      prev.sort_order === index
+    ) {
+      continue;
+    }
+    await putRow(churchId, "song_lyric_sections", {
+      ...(prev ?? { created_at: now }),
+      id,
+      song_id: songId,
+      section: block.section,
+      content: block.content,
+      sort_order: index,
+      updated_at: now,
+    } as LocalRow);
+  }
+  for (const row of existing) {
+    if (!keep.has(row.id)) await removeRow(churchId, "song_lyric_sections", row.id);
+  }
+  const song = await getRow<Song>(churchId, "songs", songId);
+  if (song) await putRow(churchId, "songs", { ...song, updated_at: now } as LocalRow);
+  invalidateQueryPrefix(`getSong:${churchId}:${songId}`);
+}
+
 export async function deleteSong(id: string) {
   const churchId = await ready();
   await removeRow(churchId, "songs", id);
@@ -683,7 +733,7 @@ export async function createSermon(input: SermonInput) {
     service_date: input.service_date || null,
     est_duration_seconds: input.est_duration_seconds ?? null,
     status: input.status || "draft",
-    text_size: input.text_size || "md",
+    text_size: input.text_size || DEFAULT_SERMON_TEXT_SIZE,
     archived_at: null,
     created_at: now,
     updated_at: now,
@@ -729,7 +779,7 @@ export async function updateSermon(id: string, input: SermonInput) {
     service_date: input.service_date || null,
     est_duration_seconds: input.est_duration_seconds ?? null,
     status: input.status || "draft",
-    text_size: input.text_size || existing.text_size || "md",
+    text_size: input.text_size || existing.text_size || DEFAULT_SERMON_TEXT_SIZE,
     updated_at: stamp(),
   };
   await putRow(churchId, "sermons", row as LocalRow);
@@ -770,6 +820,7 @@ export async function insertSermonSlide(
   input: {
     content: string;
     afterSlideId?: string | null;
+    atStart?: boolean;
     scripture_reference?: string | null;
   },
 ) {
@@ -779,15 +830,27 @@ export async function insertSermonSlide(
   const slides = (await listRows<SermonSlide>(churchId, "sermon_slides"))
     .filter((row) => row.sermon_id === sermonId)
     .sort((a, b) => a.sort_order - b.sort_order);
-  const afterIndex = input.afterSlideId
-    ? slides.findIndex((row) => row.id === input.afterSlideId)
-    : slides.length - 1;
+  const afterIndex = input.atStart
+    ? -1
+    : input.afterSlideId
+      ? slides.findIndex((row) => row.id === input.afterSlideId)
+      : slides.length - 1;
   const insertAt = Math.max(0, afterIndex + 1);
   const now = stamp();
+  const slideId = newId();
+  // The title slide's verse lives on the first non-space slide, so it moves with that position.
+  const titleHolder = slides.find((row) => !isSermonSpace(row.content));
+  const takesTitleVerse =
+    !isSermonSpace(input.content) &&
+    Boolean(titleHolder) &&
+    slides.indexOf(titleHolder!) >= insertAt;
+  const carriedVerse = takesTitleVerse ? titleHolder!.scripture_reference : null;
   await Promise.all(
     slides.slice(insertAt).map((row, index) =>
       putRow(churchId, "sermon_slides", {
         ...row,
+        scripture_reference:
+          takesTitleVerse && row.id === titleHolder!.id ? null : row.scripture_reference,
         sort_order: insertAt + 1 + index,
         updated_at: now,
       } as LocalRow),
@@ -797,18 +860,18 @@ export async function insertSermonSlide(
     churchId,
     "sermon_slides",
     {
-      id: newId(),
+      id: slideId,
       sermon_id: sermonId,
       background_asset_id: null,
       content: input.content,
-      scripture_reference: input.scripture_reference?.trim() || null,
+      scripture_reference: input.scripture_reference?.trim() || carriedVerse || null,
       sort_order: insertAt,
       created_at: now,
       updated_at: now,
     } as LocalRow,
     { localOnly: true },
   );
-  return hydrateSermon(churchId, sermon);
+  return { sermon: await hydrateSermon(churchId, sermon), slideId };
 }
 
 export async function updateSermonSlide(
@@ -906,7 +969,7 @@ export async function createScripturePassage(input: {
     bible_version_id: input.bibleVersionId || null,
     reference: input.reference.trim(),
     text: input.text?.trim() || null,
-    text_size: input.text_size || "md",
+    text_size: input.text_size || DEFAULT_STAGE_TEXT_SIZE,
     font: input.font || null,
     text_style: input.text_style || null,
     color: input.color || null,
@@ -917,6 +980,21 @@ export async function createScripturePassage(input: {
     updated_at: now,
   } as LocalRow, { localOnly: true });
   return row;
+}
+
+export async function updateScripturePassage(
+  id: string,
+  patch: Partial<Pick<ScripturePassage, "text" | "text_size" | "font" | "text_style" | "color">>,
+) {
+  const churchId = await ready();
+  const existing = await getRow<ScripturePassage>(churchId, "scripture_passages", id);
+  if (!existing) throw asError(null, "Could not update this scripture.");
+  const next: ScripturePassage = { ...existing, ...patch };
+  await putRow(churchId, "scripture_passages", {
+    ...next,
+    updated_at: stamp(),
+  } as LocalRow);
+  return next;
 }
 
 function samePassage(
@@ -989,7 +1067,13 @@ async function persistFetchedPassage(
   translation: FreeBibleTranslation,
 ) {
   const versionCode =
-    translation === "niv" ? "WEB" : translation === "kjv" ? "KJV" : "CEB";
+    translation === "niv"
+      ? "WEB"
+      : translation === "kjv"
+        ? "KJV"
+        : translation === "tl"
+          ? "TL"
+          : "CEB";
   const bibleVersionId = await bibleVersionIdForCode(versionCode);
   return findOrCreateScripturePassage({
     reference,
@@ -1303,7 +1387,7 @@ export async function addSetlistItem(
     sermonId?: string | null;
     passageId?: string | null;
     mediaAssetId?: string | null;
-    payload?: RosterPayload | null;
+    payload?: RosterPayload | ScripturePayload | null;
   },
 ) {
   const churchId = await ready();
@@ -1342,7 +1426,7 @@ export async function updateSetlistItem(
   patch: Partial<{
     title: string;
     subtitle: string | null;
-    payload: RosterPayload | null;
+    payload: RosterPayload | ScripturePayload | null;
   }>,
 ) {
   const churchId = await ready();
@@ -1426,7 +1510,7 @@ export async function saveChurchSettings(input: {
     transition_ms: input.transition_ms ?? existing?.transition_ms ?? null,
     backup_frequency: input.backup_frequency ?? existing?.backup_frequency ?? "hourly",
     lyrics_text_size:
-      input.lyrics_text_size ?? existing?.lyrics_text_size ?? "48",
+      input.lyrics_text_size ?? existing?.lyrics_text_size ?? DEFAULT_STAGE_TEXT_SIZE,
     lyrics_text_style:
       input.lyrics_text_style ?? existing?.lyrics_text_style ?? "",
     stage_background: asStageBackground(
@@ -1642,9 +1726,9 @@ export async function startPresentation(setlistId: string, name?: string) {
     verse_overlay_ref: null,
     verse_overlay_translation: null,
     verse_overlay_page: 0,
-    verse_overlay_take: 5,
+    verse_overlay_take: 1,
     verse_overlay_font: settings?.default_font ?? null,
-    verse_overlay_text_size: settings?.lyrics_text_size ?? "48",
+    verse_overlay_text_size: settings?.lyrics_text_size ?? DEFAULT_STAGE_TEXT_SIZE,
     verse_overlay_text_style: "bold",
     verse_overlay_color: "black",
     created_at: now,
@@ -1758,7 +1842,7 @@ export function buildCues(setlist: Setlist): LiveCue[] {
         continue;
       }
       sections.forEach((section, index) => {
-        const lines = splitLyricLines(section.content);
+        const lines = splitLyricLines(chordSheetToInline(section.content));
         const sectionLabel = formatSectionLabel(section.section);
         const lyricId =
           (item.song?.lyric_sections ?? []).find(
@@ -1772,7 +1856,8 @@ export function buildCues(setlist: Setlist): LiveCue[] {
           label: sectionLabel.toUpperCase() || "SONG",
           tag: section.section.slice(0, 3).toUpperCase() || `V${index + 1}`,
           title: songTitle,
-          preview: lines[0] || sectionLabel,
+          preview:
+            lines.map(stripChordProMarkers).find(Boolean) || sectionLabel,
           lines: lines.length ? lines : [sectionLabel || songTitle],
           heading: songTitle,
           sectionLabel,
@@ -1804,7 +1889,7 @@ export function buildCues(setlist: Setlist): LiveCue[] {
         lines: [sermonTitle],
         heading: null,
         align: "center",
-        textSize: item.sermon?.text_size,
+        textSize: item.sermon?.text_size || DEFAULT_SERMON_TEXT_SIZE,
         verse: titleVerse || null,
         versePlacement: titleVerse ? "bottom" : undefined,
         titleSlide: true,
@@ -1829,13 +1914,47 @@ export function buildCues(setlist: Setlist): LiveCue[] {
           slideId: slide.id,
           lyricId: `sermon-page:${slide.id}:0`,
           align: "start",
-          textSize: item.sermon?.text_size,
+          textSize: item.sermon?.text_size || DEFAULT_SERMON_TEXT_SIZE,
         });
       });
       continue;
     }
     if (item.item_type === "scripture") {
       const reference = item.passage?.reference || item.title;
+      const passageStyle = {
+        textSize: item.passage?.text_size || null,
+        font: item.passage?.font || null,
+        textStyle: item.passage?.text_style || null,
+        color: item.passage?.color || null,
+      };
+      const scripture = asScripturePayload(item.payload);
+      if (scripture?.perVerse && scripture.verses.length) {
+        const parsed = parseBibleReference(reference);
+        const translationLabel = scripture.translation
+          ? bibleTranslationLabel(scripture.translation)
+          : "";
+        for (const row of scripture.verses) {
+          const verseRef = parsed
+            ? formatBibleReference(parsed.book, parsed.chapter, [row.verse])
+            : reference;
+          cues.push({
+            id: `${item.id}-v${row.verse}`,
+            itemId: item.id,
+            kind: "scripture",
+            label: `VERSE ${row.verse}`,
+            tag: `V${row.verse}`,
+            title: reference,
+            preview: row.text.slice(0, 80),
+            lines: [`${row.verse} ${row.text}`],
+            heading: verseRef,
+            sectionLabel: translationLabel,
+            align: "center",
+            lyricId: `scripture-verse:${item.id}:${row.verse}`,
+            ...passageStyle,
+          });
+        }
+        continue;
+      }
       const text = item.passage?.text?.trim() || item.subtitle?.trim() || "";
       cues.push({
         id: item.id,
@@ -1849,6 +1968,7 @@ export function buildCues(setlist: Setlist): LiveCue[] {
         heading: reference,
         verse: reference,
         align: "center",
+        ...passageStyle,
       });
       continue;
     }

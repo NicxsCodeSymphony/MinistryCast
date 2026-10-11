@@ -1,4 +1,5 @@
 import type { RosterPayload } from "./roster";
+import type { ScripturePayload } from "./scripturePayload";
 
 export const PAGE_SIZE = 20;
 
@@ -174,7 +175,7 @@ export type SetlistItem = {
   sermon_id: string | null;
   passage_id: string | null;
   media_asset_id: string | null;
-  payload?: RosterPayload | null;
+  payload?: RosterPayload | ScripturePayload | null;
   title: string;
   subtitle: string | null;
   duration_seconds: number | null;
@@ -287,6 +288,10 @@ export type LiveCue = {
   blank?: boolean;
   textSize?: string | null;
   heading?: string | null;
+  /** Scripture styling from the passage. */
+  font?: string | null;
+  textStyle?: string | null;
+  color?: string | null;
   sectionLabel?: string | null;
   verse?: string | null;
   versePlacement?: "bottom" | "prefix";

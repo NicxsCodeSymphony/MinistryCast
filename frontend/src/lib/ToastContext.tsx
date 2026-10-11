@@ -17,8 +17,15 @@ type ToastItem = {
   message: string;
 };
 
+type ProgressItem = {
+  id: string;
+  message: string;
+};
+
 type ToastApi = {
   push: (kind: ToastKind, message: string) => void;
+  /** Show a spinner toast under `id` until called again with `null`. */
+  progress: (id: string, message: string | null) => void;
   success: (message: string) => void;
   error: (message: string) => void;
   warning: (message: string) => void;
@@ -55,7 +62,18 @@ const STYLE: Record<
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [tasks, setTasks] = useState<ProgressItem[]>([]);
   const timers = useRef(new Map<string, number>());
+
+  const progress = useCallback((id: string, message: string | null) => {
+    setTasks((prev) => {
+      const index = prev.findIndex((row) => row.id === id);
+      if (!message) return index === -1 ? prev : prev.filter((row) => row.id !== id);
+      if (index === -1) return [...prev, { id, message }];
+      if (prev[index].message === message) return prev;
+      return prev.map((row) => (row.id === id ? { id, message } : row));
+    });
+  }, []);
 
   const dismiss = useCallback((id: string) => {
     const timer = timers.current.get(id);
@@ -82,12 +100,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const api = useMemo<ToastApi>(
     () => ({
       push,
+      progress,
       success: (message) => push("success", message),
       error: (message) => push("error", message),
       warning: (message) => push("warning", message),
       info: (message) => push("info", message),
     }),
-    [push],
+    [push, progress],
   );
 
   return (
@@ -95,6 +114,27 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       {createPortal(
         <div className="pointer-events-none fixed bottom-6 right-6 z-[200] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2">
+          {tasks.map((row) => (
+            <div
+              key={row.id}
+              className="pointer-events-auto toast-in relative overflow-hidden rounded-xl border border-primary/25 bg-surface-container-high shadow-2xl"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="absolute inset-y-0 left-0 w-1 bg-primary/70 animate-pulse" />
+              <div className="flex items-center gap-3 py-3 pl-4 pr-4">
+                <span className="material-symbols-outlined text-[20px] text-primary animate-spin">
+                  progress_activity
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/80">
+                    In progress
+                  </p>
+                  <p className="text-sm leading-snug text-on-surface">{row.message}</p>
+                </div>
+              </div>
+            </div>
+          ))}
           {toasts.map((row) => {
             const look = STYLE[row.kind];
             return (

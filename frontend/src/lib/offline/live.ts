@@ -1,3 +1,4 @@
+import type { ChordDisplay } from "../chordDisplay";
 import type { LyricTextStyle } from "../lyricTextStyle";
 import type { Presentation, Setlist } from "../types";
 import { invalidateQueries } from "./queryCache";
@@ -57,6 +58,7 @@ export type StageSnapshot = {
   lyricStyle: LyricTextStyle;
   stageBg: string;
   transitionStyle: string;
+  chords?: ChordDisplay;
   at: number;
 };
 
@@ -85,6 +87,10 @@ export function setlistFingerprint(setlist: Setlist | null) {
       ]),
       item.passage?.reference,
       item.passage?.text,
+      item.passage?.text_size,
+      item.passage?.font,
+      item.passage?.text_style,
+      item.passage?.color,
       item.payload,
     ]),
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   bibleVersionIdForCode,
   findOrCreateScripturePassage,
@@ -7,6 +7,7 @@ import {
 import {
   BIBLE_BOOKS,
   FREE_BIBLE_TRANSLATIONS,
+  findBibleBook,
   formatBibleReference,
   isFreeBibleTranslation,
   joinVerseText,
@@ -18,7 +19,11 @@ import { newServiceItem, type ServiceItem } from "./serviceItem";
 import TextSizePicker from "../TextSizePicker";
 import TextStylePicker from "../TextStylePicker";
 import { DEFAULT_STAGE_FONT, STAGE_FONTS, stageFontFamily } from "../../lib/stageFonts";
-import type { LyricTextStyle } from "../../lib/lyricTextStyle";
+import {
+  DEFAULT_STAGE_TEXT_SIZE,
+  serializeLyricTextStyle,
+  type LyricTextStyle,
+} from "../../lib/lyricTextStyle";
 
 type ScriptureSelectPanelProps = {
   setlistName: string;
@@ -39,8 +44,8 @@ export default function ScriptureSelectPanel({
   const [chapter, setChapter] = useState(4);
   const [selectedVerses, setSelectedVerses] = useState<number[]>([2, 3, 4]);
   const [previewMode, setPreviewMode] = useState<"screen" | "stage">("screen");
-  const [autoPaginate, setAutoPaginate] = useState(true);
-  const [textSize, setTextSize] = useState("md");
+  const [perVerse, setPerVerse] = useState(true);
+  const [textSize, setTextSize] = useState(DEFAULT_STAGE_TEXT_SIZE);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
   const [textStyle, setTextStyle] = useState<LyricTextStyle>({
     bold: true,
@@ -66,10 +71,13 @@ export default function ScriptureSelectPanel({
 
   useEffect(() => {
     const controller = new AbortController();
+    let cancelled = false;
     setChapterBusy(true);
     setChapterError("");
+    setChapterData(null);
     void loadBibleChapter(book, chapter, translation, controller.signal)
       .then((data) => {
+        if (cancelled) return;
         setChapterData(data);
         setSelectedVerses((prev) => {
           const allowed = new Set(data.verses.map((row) => row.verse));
@@ -78,32 +86,100 @@ export default function ScriptureSelectPanel({
         });
       })
       .catch((err) => {
+        if (cancelled) return;
         if (err instanceof DOMException && err.name === "AbortError") return;
         setChapterData(null);
         setChapterError(
           err instanceof Error ? err.message : "Could not load this chapter.",
         );
       })
-      .finally(() => setChapterBusy(false));
-    return () => controller.abort();
+      .finally(() => {
+        if (!cancelled) setChapterBusy(false);
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [book, chapter, translation]);
 
   const verseText = (n: number) =>
     verseMap.get(n) ?? (chapterBusy ? "Loading…" : "");
 
-  const applyQuickRef = () => {
-    const parsed = parseBibleReference(quickRef);
-    if (!parsed) return;
-    setBook(parsed.book);
-    setChapter(parsed.chapter);
-    if (parsed.verses.length) setSelectedVerses(parsed.verses);
+  /** Follow the quick reference as it is typed: "John" → book, "John 3" → chapter, "John 3:16" → verses. */
+  const pickedRef = useRef("");
+  const typedRef = useRef(false);
+  const followQuickRef = (raw: string) => {
+    if (raw === pickedRef.current) return;
+    const cleaned = raw.trim().replace(/[\s:,.\-–—]+$/, "");
+    if (!cleaned) return;
+    typedRef.current = true;
+    const parsed = parseBibleReference(cleaned);
+    if (parsed) {
+      const sameChapter = parsed.book === book && parsed.chapter === chapter;
+      setBook(parsed.book);
+      setChapter(parsed.chapter);
+      if (parsed.verses.length) setSelectedVerses(parsed.verses);
+      else if (!sameChapter) setSelectedVerses([1]);
+      return;
+    }
+    if (!/^[1-3]?\s*[^\d]+$/.test(cleaned)) return;
+    const found = findBibleBook(cleaned);
+    if (found && found.name !== book) {
+      setBook(found.name);
+      setChapter(1);
+      setSelectedVerses([1]);
+    }
+  };
+
+  useEffect(() => {
+    const id = window.setTimeout(() => followQuickRef(quickRef), 180);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickRef]);
+
+  const applyQuickRef = () => followQuickRef(quickRef);
+
+  const pick = (nextBook: string, nextChapter: number, nextVerses: number[]) => {
+    setBook(nextBook);
+    setChapter(nextChapter);
+    setSelectedVerses(nextVerses);
+    typedRef.current = false;
+    pickedRef.current = formatBibleReference(nextBook, nextChapter, nextVerses);
+    setQuickRef(pickedRef.current);
   };
 
   const toggleVerse = (n: number) => {
-    setSelectedVerses((prev) =>
-      prev.includes(n) ? prev.filter((v) => v !== n) : [...prev, n].sort((a, b) => a - b),
-    );
+    const next = selectedVerses.includes(n)
+      ? selectedVerses.filter((v) => v !== n)
+      : [...selectedVerses, n].sort((a, b) => a - b);
+    pick(book, chapter, next);
   };
+
+  const allSelected = verses.length > 0 && selectedVerses.length === verses.length;
+  const toggleAllVerses = () => {
+    pick(book, chapter, allSelected ? (verses[0] ? [verses[0]] : []) : [...verses]);
+  };
+
+  const bookListRef = useRef<HTMLDivElement>(null);
+  const chapterGridRef = useRef<HTMLDivElement>(null);
+  const verseListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bookListRef.current
+      ?.querySelector(`[data-book="${CSS.escape(book)}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [book]);
+  useEffect(() => {
+    chapterGridRef.current
+      ?.querySelector(`[data-chapter="${chapter}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [book, chapter]);
+  const firstVerse = selectedVerses[0];
+  useEffect(() => {
+    if (!firstVerse || !chapterData || !typedRef.current) return;
+    verseListRef.current
+      ?.querySelector(`[data-verse="${firstVerse}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [chapterData, firstVerse]);
 
   const reference = formatBibleReference(book, chapter, selectedVerses);
   const translationLabel = translation.toUpperCase();
@@ -119,9 +195,10 @@ export default function ScriptureSelectPanel({
     if (!selectedVerses.length || saving) return;
     setSaving(true);
     void (async () => {
-      const text = joinVerseText(
-        selectedVerses.map((n) => ({ verse: n, text: verseText(n) })).filter((row) => row.text),
-      );
+      const rows = selectedVerses
+        .map((n) => ({ verse: n, text: verseMap.get(n) ?? "" }))
+        .filter((row) => row.text);
+      const text = joinVerseText(rows);
       const bibleVersionId = await bibleVersionIdForCode(translation);
       const passage = await findOrCreateScripturePassage({
         reference,
@@ -129,7 +206,7 @@ export default function ScriptureSelectPanel({
         bibleVersionId,
         text_size: textSize,
         font,
-        text_style: JSON.stringify(textStyle),
+        text_style: serializeLyricTextStyle(textStyle),
         color,
       });
       onAdd(
@@ -137,11 +214,15 @@ export default function ScriptureSelectPanel({
           itemType: "scripture",
           passageId: passage.id,
           title: `Scripture Reading: ${reference}`,
-          subtitle: `${translationLabel} • Layout: Lower Thirds`,
+          subtitle:
+            perVerse && rows.length > 1
+              ? `${translationLabel} • ${rows.length} verses, one per slide`
+              : `${translationLabel} • Layout: Lower Thirds`,
           duration: "01:30",
           label: "Verse",
           icon: "menu_book",
           accent: "secondary",
+          payload: { kind: "scripture", translation, perVerse, verses: rows },
         }),
       );
     })()
@@ -224,7 +305,7 @@ export default function ScriptureSelectPanel({
                       }}
                       onBlur={applyQuickRef}
                       className="w-full bg-surface-container-low border border-white/10 text-on-surface rounded-lg pl-10 pr-4 py-3 focus:outline-none focus:ring-0 placeholder-outline-variant"
-                      placeholder="e.g. John 3:16"
+                      placeholder="e.g. John 3:16 · Juan 3:16 · Pina 21:4 · Mga Awit 23"
                       type="text"
                     />
                   </div>
@@ -258,7 +339,8 @@ export default function ScriptureSelectPanel({
                 <p className="text-sm text-[#ffb4ab]">{chapterError}</p>
               ) : (
                 <p className="text-xs text-on-surface-variant">
-                  Scripture text (NIV, KJV, and Visayan Maayong Balita) from
+                  Search book names in English, Bisaya, or Tagalog (short forms work too).
+                  Scripture text (NIV, KJV, Bisaya, and Tagalog) from
                   open-source XML repositories. Chapters are cached on this device
                   and saved to your church library.
                 </p>
@@ -267,19 +349,41 @@ export default function ScriptureSelectPanel({
 
             <div className="glass-panel rounded-xl flex-1 flex flex-col overflow-hidden min-h-[360px]">
               <div className="grid grid-cols-3 border-b border-white/10">
-                {["BOOK", "CHAPTER", "VERSE"].map((label) => (
+                {["BOOK", "CHAPTER"].map((label) => (
                   <div
                     key={label}
-                    className={`p-4 text-[12px] font-semibold tracking-widest text-on-surface-variant text-center ${
-                      label !== "VERSE" ? "border-r border-white/10" : ""
-                    }`}
+                    className="p-4 text-[12px] font-semibold tracking-widest text-on-surface-variant text-center border-r border-white/10"
                   >
                     {label}
                   </div>
                 ))}
+                <div className="px-3 py-2.5 flex items-center justify-between gap-2">
+                  <span className="text-[12px] font-semibold tracking-widest text-on-surface-variant">
+                    VERSE
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleAllVerses}
+                    disabled={!verses.length || chapterBusy}
+                    className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+                      allSelected
+                        ? "bg-primary/15 text-primary border border-primary/30"
+                        : "bg-surface-container-low text-on-surface-variant border border-white/10 hover:text-on-surface hover:bg-white/5"
+                    }`}
+                    title={allSelected ? "Clear selection" : "Select every verse in this chapter"}
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      {allSelected ? "deselect" : "select_all"}
+                    </span>
+                    {allSelected ? "Clear" : `All ${verses.length || ""}`.trim()}
+                  </button>
+                </div>
               </div>
               <div className="flex-1 grid grid-cols-3 min-h-0">
-                <div className="overflow-y-auto border-r border-white/10 py-2 custom-scrollbar">
+                <div
+                  ref={bookListRef}
+                  className="overflow-y-auto border-r border-white/10 py-2 custom-scrollbar"
+                >
                   <ul className="space-y-1 px-2">
                     {BIBLE_BOOKS.map((item, index) => {
                       const prev = BIBLE_BOOKS[index - 1];
@@ -299,11 +403,8 @@ export default function ScriptureSelectPanel({
                           ) : null}
                           <button
                             type="button"
-                            onClick={() => {
-                              setBook(item.name);
-                              setChapter(1);
-                              setSelectedVerses([1]);
-                            }}
+                            data-book={item.name}
+                            onClick={() => pick(item.name, 1, [1])}
                             className={`w-full text-left px-4 py-2 rounded-md text-sm transition-colors ${
                               book === item.name
                                 ? "text-primary bg-primary/10 border border-primary/20"
@@ -317,17 +418,18 @@ export default function ScriptureSelectPanel({
                     })}
                   </ul>
                 </div>
-                <div className="overflow-y-auto border-r border-white/10 p-4 custom-scrollbar">
+                <div
+                  ref={chapterGridRef}
+                  className="overflow-y-auto border-r border-white/10 p-4 custom-scrollbar"
+                >
                   <div className="grid grid-cols-3 gap-2">
                     {Array.from({ length: bookMeta.chapters }, (_, i) => i + 1).map(
                       (n) => (
                         <button
                           key={n}
                           type="button"
-                          onClick={() => {
-                            setChapter(n);
-                            setSelectedVerses([1]);
-                          }}
+                          data-chapter={n}
+                          onClick={() => pick(book, n, [1])}
                           className={`aspect-square rounded-md flex items-center justify-center text-sm transition-colors ${
                             chapter === n
                               ? "text-primary bg-primary/10 border border-primary/30 shadow-[0_0_10px_rgba(155,203,255,0.2)]"
@@ -340,18 +442,31 @@ export default function ScriptureSelectPanel({
                     )}
                   </div>
                 </div>
-                <div className="overflow-y-auto p-2 custom-scrollbar">
+                <div ref={verseListRef} className="overflow-y-auto p-2 custom-scrollbar">
                   {chapterBusy && !verses.length ? (
-                    <p className="p-3 text-sm text-on-surface-variant">
-                      Loading verses…
-                    </p>
+                    <div className="p-3 flex items-start gap-2 text-sm text-on-surface-variant">
+                      <span className="material-symbols-outlined text-[18px] animate-spin shrink-0">
+                        progress_activity
+                      </span>
+                      <div>
+                        <p>
+                          Loading {book} {chapter} (
+                          {FREE_BIBLE_TRANSLATIONS.find((item) => item.value === translation)?.label ??
+                            translation.toUpperCase()}
+                          )…
+                        </p>
+                        <p className="text-[11px] mt-1 opacity-80">
+                          The first time a translation is used it downloads once, then it is instant.
+                        </p>
+                      </div>
+                    </div>
                   ) : null}
                   <ul className="space-y-1">
                     {verses.map((n) => {
                       const checked = selectedVerses.includes(n);
                       const text = verseText(n);
                       return (
-                        <li key={n}>
+                        <li key={n} data-verse={n}>
                           <label
                             className={`flex items-start gap-3 p-2 rounded-md cursor-pointer transition-colors group ${
                               checked
@@ -477,7 +592,7 @@ export default function ScriptureSelectPanel({
                       fontWeight: textStyle.bold ? "bold" : "normal",
                     }}
                   >
-                    {selectedVerses.slice(0, 2).map((n) => (
+                    {selectedVerses.slice(0, perVerse ? 1 : 2).map((n) => (
                       <span key={n}>
                         <sup
                           className="font-normal text-sm mr-1"
@@ -494,8 +609,16 @@ export default function ScriptureSelectPanel({
                     className="font-medium tracking-wide uppercase text-sm mt-4 drop-shadow-md"
                     style={{ opacity: 0.9 }}
                   >
-                    {reference} ({translationLabel})
+                    {perVerse && selectedVerses.length
+                      ? formatBibleReference(book, chapter, [selectedVerses[0]])
+                      : reference}{" "}
+                    ({translationLabel})
                   </p>
+                  {perVerse && selectedVerses.length > 1 ? (
+                    <p className="text-[11px] mt-1" style={{ opacity: 0.7 }}>
+                      Slide 1 of {selectedVerses.length} · each verse gets its own slide in Live
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -529,20 +652,20 @@ export default function ScriptureSelectPanel({
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-[12px] font-medium text-on-surface-variant">
-                  Auto-paginate long verses
+                  One verse per slide
                 </span>
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={autoPaginate}
-                  onClick={() => setAutoPaginate((prev) => !prev)}
+                  aria-checked={perVerse}
+                  onClick={() => setPerVerse((prev) => !prev)}
                   className={`w-10 h-6 rounded-full relative cursor-pointer transition-opacity ${
-                    autoPaginate ? "bg-primary opacity-80 hover:opacity-100" : "bg-white/10"
+                    perVerse ? "bg-primary opacity-80 hover:opacity-100" : "bg-white/10"
                   }`}
                 >
                   <div
                     className={`w-4 h-4 bg-on-primary rounded-full absolute top-1 shadow-sm transition-all ${
-                      autoPaginate ? "right-1" : "left-1 bg-on-surface-variant"
+                      perVerse ? "right-1" : "left-1 bg-on-surface-variant"
                     }`}
                   />
                 </button>

@@ -13,9 +13,12 @@ import {
   subscribePresentation,
 } from "../../lib/api";
 import { setlistFingerprint, subscribeContent, subscribeStageSnapshot } from "../../lib/offline/live";
+import { asChordDisplay, readChordDisplay, type ChordDisplay } from "../../lib/chordDisplay";
 import { asStageFont, DEFAULT_STAGE_FONT } from "../../lib/stageFonts";
 import { asStageBackground, stageUsesDarkText, type StageBackgroundId } from "../../lib/stageBackgrounds";
 import {
+  DEFAULT_LYRIC_TEXT_STYLE,
+  DEFAULT_STAGE_TEXT_SIZE,
   parseLyricTextStyle,
   type LyricTextStyle,
 } from "../../lib/lyricTextStyle";
@@ -39,14 +42,11 @@ export default function Output() {
   const [presentation, setPresentation] = useState<Presentation | null>(null);
   const [setlist, setSetlist] = useState<Setlist | null>(null);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
-  const [lyricSize, setLyricSize] = useState("48");
+  const [lyricSize, setLyricSize] = useState(DEFAULT_STAGE_TEXT_SIZE);
   const [stageBg, setStageBg] = useState<StageBackgroundId>("sanctuary");
-  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>({
-    bold: false,
-    italic: false,
-    underline: false,
-  });
+  const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>(DEFAULT_LYRIC_TEXT_STYLE);
   const [transitionStyle, setTransitionStyle] = useState<StageTransition>("dissolve");
+  const [chords, setChords] = useState<ChordDisplay>(readChordDisplay);
   const [error, setError] = useState("");
   const setlistFp = useRef("");
 
@@ -70,7 +70,7 @@ export default function Output() {
         const settings = await getChurchSettings();
         if (!cancelled) {
           setFont(asStageFont(settings?.default_font));
-          setLyricSize(settings?.lyrics_text_size || "48");
+          setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
           setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
           setStageBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
@@ -99,7 +99,7 @@ export default function Output() {
       void getChurchSettings({ fresh: true })
         .then((settings) => {
           setFont(asStageFont(settings?.default_font));
-          setLyricSize(settings?.lyrics_text_size || "48");
+          setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
           setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
           setStageBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
@@ -111,10 +111,11 @@ export default function Output() {
       if (snapshot.setlistId !== setlistId) return;
       applySetlist(snapshot.setlist);
       setFont(asStageFont(snapshot.font));
-      setLyricSize(snapshot.lyricSize || "48");
+      setLyricSize(snapshot.lyricSize || DEFAULT_STAGE_TEXT_SIZE);
       setLyricStyle(snapshot.lyricStyle);
       setStageBg(asStageBackground(snapshot.stageBg));
       setTransitionStyle(asStageTransition(snapshot.transitionStyle));
+      if (snapshot.chords) setChords(asChordDisplay(snapshot.chords));
     });
     reload();
     const timer = window.setInterval(reload, 800);
@@ -195,6 +196,7 @@ export default function Output() {
             lyricSize={lyricSize}
             darkText={darkText}
             lyricStyle={lyricStyle}
+            chords={chords}
           />
         </div>
       ) : null}
@@ -205,12 +207,12 @@ export default function Output() {
           translation={presentation.verse_overlay_translation || "ceb"}
           font={presentation.verse_overlay_font || font || DEFAULT_STAGE_FONT}
           textSize={
-            presentation.verse_overlay_text_size || lyricSize || "48"
+            presentation.verse_overlay_text_size || lyricSize || DEFAULT_STAGE_TEXT_SIZE
           }
           textStyle={presentation.verse_overlay_text_style || "bold"}
           color={presentation.verse_overlay_color || "black"}
           page={presentation.verse_overlay_page ?? 0}
-          pageSize={presentation.verse_overlay_take || 5}
+          pageSize={presentation.verse_overlay_take || 1}
         />
       ) : null}
     </div>

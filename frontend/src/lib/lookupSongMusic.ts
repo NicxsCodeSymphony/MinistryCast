@@ -61,6 +61,24 @@ function mapKey(raw: string | null | undefined) {
   return (KEYS as readonly string[]).includes(note) ? note : null;
 }
 
+/** Like mapKey, but keeps minor keys (`F# minor` → `Gbm`). */
+function mapKeyWithMode(raw: string | null | undefined) {
+  const root = mapKey(raw);
+  if (!root || !raw) return root;
+  const text = raw.trim();
+  const minor = /\bmin(or)?\b/i.test(text) || /^[A-Ga-g]\s*[#b♯♭]?\s*m$/.test(text);
+  return minor ? `${root}m` : root;
+}
+
+/** Clean an AI answer into the same shape the catalog lookup returns. */
+export function cleanMusicMeta(raw: { key?: string; bpm?: string; signature?: string }): SongMusicMeta {
+  return {
+    key: mapKeyWithMode(raw.key),
+    bpm: mapBpm(raw.bpm),
+    signature: mapSignature(raw.signature),
+  };
+}
+
 function mapSignature(raw: string | null | undefined) {
   if (!raw) return null;
   const text = raw.trim().replace(/\s+/g, "");
@@ -124,9 +142,14 @@ async function fetchJson<T>(url: string, signal: AbortSignal | undefined, header
       : Array.isArray(headers)
         ? Object.fromEntries(headers)
         : (headers as Record<string, string> | undefined);
-  const response = await catalogFetch(url, { signal, headers: normalized });
-  if (!response.ok) return null;
-  return (await response.json()) as T;
+  try {
+    const response = await catalogFetch(url, { signal, headers: normalized });
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch (err) {
+    if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) throw err;
+    return null;
+  }
 }
 
 async function searchAudioDb(title: string, artist: string, signal?: AbortSignal) {

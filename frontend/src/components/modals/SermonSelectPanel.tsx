@@ -28,7 +28,6 @@ export default function SermonSelectPanel({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState({
@@ -50,7 +49,6 @@ export default function SermonSelectPanel({
         const page = await listSermons({ query: debounced, limit: PAGE_SIZE, offset: 0 });
         setSermons(page.items);
         setTotal(page.total);
-        setOffset(0);
         setSelectedId((prev) =>
           prev === CREATE_ID ? prev : page.items[0]?.id ?? CREATE_ID,
         );
@@ -112,43 +110,45 @@ export default function SermonSelectPanel({
       <button
         type="button"
         onClick={onClose}
-        className="absolute top-4 right-4 z-50 w-10 h-10 rounded-full bg-surface-container-high/50 flex items-center justify-center border border-white/5"
+        className="absolute top-4 right-4 z-50 w-9 h-9 rounded-full bg-surface-container-high/50 flex items-center justify-center border border-white/5 text-on-surface-variant hover:text-on-surface"
         aria-label="Close"
       >
-        <span className="material-symbols-outlined">close</span>
+        <span className="material-symbols-outlined text-[20px]">close</span>
       </button>
-      <header className="px-6 py-4 border-b border-white/10 pr-16">
+      <header className="px-5 pt-4 pb-3 border-b border-white/10 pr-14 shrink-0">
         <button
           type="button"
           onClick={onBack}
-          className="text-[12px] uppercase text-on-surface-variant"
+          className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-on-surface-variant hover:text-primary"
         >
+          <span className="material-symbols-outlined text-[14px]">arrow_back</span>
           {setlistName}
         </button>
-        <h2 className="text-[28px] font-bold text-on-surface mt-1">Select Sermon</h2>
+        <h2 className="text-xl font-bold text-on-surface mt-1">Select Sermon</h2>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          className="mt-4 w-full md:w-96 bg-surface-container-high/50 rounded-xl px-4 py-2.5 outline-none"
+          className="mt-3 w-full bg-surface-container-high/50 rounded-lg px-3 py-2 text-sm outline-none"
           placeholder="Search sermons..."
         />
       </header>
-      <div className="flex-1 overflow-y-auto p-6 space-y-2 custom-scrollbar">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2 custom-scrollbar">
         {error ? <p className="text-sm text-[#ffb4ab]">{error}</p> : null}
         <button
           type="button"
           onClick={() => setSelectedId(CREATE_ID)}
-          className={`w-full rounded-xl p-4 text-left border ${
+          className={`w-full rounded-xl px-4 py-2.5 text-left text-sm font-semibold border flex items-center gap-2 ${
             selectedId === CREATE_ID
               ? "border-tertiary/30 bg-tertiary/10"
-              : "border-dashed border-white/20"
+              : "border-dashed border-white/20 hover:bg-white/5"
           }`}
         >
+          <span className="material-symbols-outlined text-[18px]">add</span>
           Create New Sermon
         </button>
         {selectedId === CREATE_ID ? (
           <form
-            className="rounded-xl p-4 space-y-3 border border-tertiary/20"
+            className="rounded-xl p-3 space-y-2.5 border border-tertiary/20"
             onSubmit={(event) => {
               event.preventDefault();
               void addDraft();
@@ -159,7 +159,7 @@ export default function SermonSelectPanel({
               onChange={(event) =>
                 setDraft((prev) => ({ ...prev, title: event.target.value }))
               }
-              className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-3"
+              className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-2 text-sm"
               placeholder="Sermon title"
             />
             <input
@@ -167,7 +167,7 @@ export default function SermonSelectPanel({
               onChange={(event) =>
                 setDraft((prev) => ({ ...prev, scripture: event.target.value }))
               }
-              className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-3"
+              className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-2 text-sm"
               placeholder="Primary scripture"
             />
             <div className="grid grid-cols-2 gap-3">
@@ -176,7 +176,7 @@ export default function SermonSelectPanel({
                 onChange={(event) =>
                   setDraft((prev) => ({ ...prev, speaker: event.target.value }))
                 }
-                className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-3"
+                className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-2 text-sm"
                 placeholder="Speaker"
               />
               <input
@@ -184,14 +184,14 @@ export default function SermonSelectPanel({
                 onChange={(event) =>
                   setDraft((prev) => ({ ...prev, duration: event.target.value }))
                 }
-                className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-3"
+                className="w-full bg-surface-container/50 border border-white/10 rounded-lg px-3 py-2 text-sm"
                 placeholder="Duration"
               />
             </div>
             <button
               type="submit"
               disabled={saving || !draft.title.trim()}
-              className="w-full py-3 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold rounded-xl disabled:opacity-40"
+              className="w-full py-2.5 text-sm bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold rounded-xl disabled:opacity-40"
             >
               {saving ? "Saving…" : "Add to Setlist"}
             </button>
@@ -203,7 +203,7 @@ export default function SermonSelectPanel({
             key={sermon.id}
             type="button"
             onClick={() => addExisting(sermon)}
-            className="w-full rounded-xl p-4 text-left hover:bg-white/5 border border-transparent"
+            className="w-full rounded-xl px-4 py-3 text-left hover:bg-white/5 border border-transparent"
           >
             <p className="font-semibold">{sermon.title}</p>
             <p className="text-sm text-on-surface-variant">
@@ -214,19 +214,18 @@ export default function SermonSelectPanel({
         <LoadMoreBar
           shown={sermons.length}
           total={total}
-          hasMore={offset + sermons.length < total}
+          hasMore={sermons.length < total}
           loading={loadingMore}
           onMore={() => {
             setLoadingMore(true);
             void listSermons({
               query: debounced,
               limit: PAGE_SIZE,
-              offset: offset + PAGE_SIZE,
+              offset: sermons.length,
             })
               .then((page) => {
                 setSermons((prev) => [...prev, ...page.items]);
                 setTotal(page.total);
-                setOffset(offset + PAGE_SIZE);
               })
               .finally(() => setLoadingMore(false));
           }}
