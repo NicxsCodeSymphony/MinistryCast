@@ -38,10 +38,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     try {
       // Never clear the cache before a successful fetch — that wiped the header
       // avatar on token refresh / transient RPC failures.
-      if (fresh) {
-        /* still hit network via getSessionProfile */
-      }
-      const next = await getSessionProfile();
+      const next = await getSessionProfile({ fresh });
       setProfileState(next);
       return next;
     } catch {
@@ -73,12 +70,12 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         setProfileState(null);
         return;
       }
-      if (
-        event === "SIGNED_IN" ||
-        event === "TOKEN_REFRESHED" ||
-        event === "USER_UPDATED"
-      ) {
+      if (event === "USER_UPDATED") {
         void refreshProfile(true);
+      } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        // The profile cache is keyed by user and cleared on sign-out, and a new
+        // access token does not change the profile: reuse a recent copy.
+        void refreshProfile(false);
       }
     });
 

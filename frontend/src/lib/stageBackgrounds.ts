@@ -13,18 +13,38 @@ export const STAGE_BACKGROUND_IDS = [
   "slate",
 ] as const;
 
-export type StageBackgroundId = (typeof STAGE_BACKGROUND_IDS)[number];
+export type BuiltInStageBackgroundId = (typeof STAGE_BACKGROUND_IDS)[number];
+
+/**
+ * A stage background is either a built-in look or a custom image uploaded by
+ * the church: `img:<media_asset_id>` (fits the varchar(40) settings column).
+ */
+export type StageBackgroundId = BuiltInStageBackgroundId | `img:${string}`;
+
+export const IMAGE_BACKGROUND_PREFIX = "img:";
+
+export function isImageBackground(id?: string | null): id is `img:${string}` {
+  return Boolean(id && id.startsWith(IMAGE_BACKGROUND_PREFIX) && id.length > 4);
+}
+
+export function imageBackgroundId(assetId: string): `img:${string}` {
+  return `img:${assetId}`;
+}
+
+export function imageBackgroundAssetId(id?: string | null) {
+  return isImageBackground(id) ? id.slice(IMAGE_BACKGROUND_PREFIX.length) : null;
+}
 
 export const DEFAULT_STAGE_BACKGROUND: StageBackgroundId = "sanctuary";
 
 export type StageBackgroundDef = {
   id: StageBackgroundId;
   label: string;
-  kind: "none" | "photo" | "wash";
+  kind: "none" | "photo" | "wash" | "image";
   style?: Record<string, string>;
 };
 
-export const STAGE_BACKGROUNDS: StageBackgroundDef[] = [
+export const STAGE_BACKGROUNDS: Array<StageBackgroundDef & { id: BuiltInStageBackgroundId }> = [
   { id: "none", label: "None", kind: "none" },
   {
     id: "white",
@@ -117,6 +137,7 @@ export const STAGE_BACKGROUNDS: StageBackgroundDef[] = [
 ];
 
 export function asStageBackground(raw?: string | null): StageBackgroundId {
+  if (isImageBackground(raw)) return raw;
   if (raw && (STAGE_BACKGROUND_IDS as readonly string[]).includes(raw)) {
     return raw as StageBackgroundId;
   }
@@ -129,5 +150,6 @@ export function stageUsesDarkText(id?: string | null) {
 
 export function stageBackgroundDef(id?: string | null): StageBackgroundDef {
   const next = asStageBackground(id);
+  if (isImageBackground(next)) return { id: next, label: "Custom image", kind: "image" };
   return STAGE_BACKGROUNDS.find((row) => row.id === next) ?? STAGE_BACKGROUNDS[1];
 }

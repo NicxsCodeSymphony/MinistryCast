@@ -1,12 +1,8 @@
 import type { ReactNode } from "react";
-import {
-  BroadcastIcon,
-  CloudSyncIcon,
-  CollaborationIcon,
-  VideoIcon,
-} from "../components/icons";
-import churchInterior from "../assets/images/church-interior.png";
+import Icon from "../components/Icon";
+import { BentoCard, BentoGrid } from "../components/bento";
 import { BUNDLED_VERSION } from "../lib/appVersion";
+import { PALETTES } from "../lib/palettes";
 
 type AuthFrameProps = {
   children: ReactNode;
@@ -50,6 +46,165 @@ function AuthSteps({ current }: { current: 1 | 2 | 3 }) {
   );
 }
 
+/* ── Feature bento (illustrative mini-visuals only, no data) ─────────── */
+
+function FeatureTitle({ icon, title, body }: { icon: string; title: string; body: string }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2.5">
+        <span className="w-7 h-7 shrink-0 rounded-lg border border-white/10 bg-surface-container-high flex items-center justify-center text-on-surface-variant">
+          <Icon name={icon} className="text-[14px]" />
+        </span>
+        <p className="text-[14px] font-medium text-on-surface">{title}</p>
+      </div>
+      <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">{body}</p>
+    </div>
+  );
+}
+
+/** A tiny 16:9 projector frame with a lyric slide. */
+function MiniStage() {
+  return (
+    <div
+      aria-hidden
+      className="force-dark relative aspect-video w-full rounded-[10px] overflow-hidden border border-white/10 bg-black"
+    >
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-6 pt-4 text-center">
+        <p className="font-serif text-[14px] xl:text-[16px] leading-snug text-white/90">
+          Holy, holy, holy!
+        </p>
+        <p className="font-serif text-[14px] xl:text-[16px] leading-snug text-white/90">
+          Lord God Almighty
+        </p>
+      </div>
+      <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-white/80">
+        <span className="w-1.5 h-1.5 rounded-full bg-error" />
+        Live
+      </span>
+      <span className="absolute right-3 bottom-3 text-[10px] text-white/50">Verse 1 · 1/4</span>
+    </div>
+  );
+}
+
+function MiniOutputs() {
+  const outputs = [
+    { icon: "desktop_windows", label: "Projector" },
+    { icon: "live_tv", label: "Stage" },
+    { icon: "cast", label: "Stream" },
+  ];
+  return (
+    <ul aria-hidden className="grid grid-cols-3 gap-2">
+      {outputs.map((output) => (
+        <li
+          key={output.label}
+          className="rounded-lg border border-white/10 bg-surface-container-low px-2 py-2.5 flex flex-col items-center gap-1.5"
+        >
+          <Icon name={output.icon} className="text-[16px] text-on-surface-variant" />
+          <span className="text-[11px] text-on-surface-variant">{output.label}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MiniOffline() {
+  return (
+    <div aria-hidden className="flex items-center gap-2">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-surface-container-low px-2.5 py-1 text-[11px] text-on-surface-variant">
+        <Icon name="cloud_done" className="text-[13px] text-primary" />
+        Saved on this device
+      </span>
+    </div>
+  );
+}
+
+function MiniTeam() {
+  const roles = [{ label: "Admin" }, { label: "Producer" }, { label: "Operator" }];
+  return (
+    <ul aria-hidden className="flex flex-wrap gap-1.5">
+      {roles.map((role) => (
+        <li
+          key={role.label}
+          className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-surface-container-low px-2.5 py-1 text-[11px] text-on-surface-variant"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-primary/70" />
+          {role.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MiniPalettes() {
+  return (
+    <ul aria-hidden className="grid grid-cols-9 gap-1.5">
+      {PALETTES.map((palette) => (
+        <li key={palette.id} title={palette.label} className="aspect-square rounded-md overflow-hidden border border-white/10 flex">
+          <span className="flex-1" style={{ background: palette.swatch.dark }} />
+          <span className="flex-1" style={{ background: palette.swatch.accent }} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function FeatureBento() {
+  return (
+    <BentoGrid className="w-full max-w-[720px] auto-rows-auto">
+      <BentoCard span={12} accent aria-label="Cinematic stage output">
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-5 items-center pt-1">
+          <FeatureTitle
+            icon="slideshow"
+            title="Cinematic stage output"
+            body="Lyrics, scripture, and sermon slides with smooth transitions on every screen."
+          />
+          <MiniStage />
+        </div>
+      </BentoCard>
+      <BentoCard span={6} aria-label="Independent outputs">
+        <div className="pt-1 flex flex-col gap-4 h-full justify-between">
+          <FeatureTitle
+            icon="cast"
+            title="Independent outputs"
+            body="Drive the projector, stage monitor, and stream from one console."
+          />
+          <MiniOutputs />
+        </div>
+      </BentoCard>
+      <BentoCard span={6} aria-label="Works offline">
+        <div className="pt-1 flex flex-col gap-4 h-full justify-between">
+          <FeatureTitle
+            icon="cloud_sync"
+            title="Works offline"
+            body="Everything saves on this device first and backs up when you're online."
+          />
+          <MiniOffline />
+        </div>
+      </BentoCard>
+      <BentoCard span={6} aria-label="Built for the whole team">
+        <div className="pt-1 flex flex-col gap-4 h-full justify-between">
+          <FeatureTitle
+            icon="group"
+            title="Built for the whole team"
+            body="Roles, approvals, and chat for worship, media, and pastoral staff."
+          />
+          <MiniTeam />
+        </div>
+      </BentoCard>
+      <BentoCard span={6} aria-label="Make it yours">
+        <div className="pt-1 flex flex-col gap-4 h-full justify-between">
+          <FeatureTitle
+            icon="palette"
+            title="Make it yours"
+            body="Nine color themes, light and dark, on every device."
+          />
+          <MiniPalettes />
+        </div>
+      </BentoCard>
+    </BentoGrid>
+  );
+}
+
 export default function AuthFrame({ children, step = 1 }: AuthFrameProps) {
   return (
     <div className="h-full overflow-y-auto bg-[#0B0B14]">
@@ -79,46 +234,18 @@ export default function AuthFrame({ children, step = 1 }: AuthFrameProps) {
               </div>
             </div>
 
-            <div className="p-6 sm:p-10 lg:p-12 flex flex-col gap-6">
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6 sm:p-8">
-                <div className="w-12 h-12 bg-indigo-500/20 rounded-lg flex items-center justify-center mb-6">
-                  <VideoIcon />
-                </div>
-                <h4 className="text-xl font-bold mb-3 text-[#E2E8F0]">Cinematic Engine</h4>
-                <p className="text-white/50 text-sm leading-relaxed">
-                  Adaptive lyric rendering with AI-enhanced background selection
-                  and smooth 60fps transitions.
-                </p>
+            <aside
+              aria-label="Why MinistryCast"
+              className="force-dark p-6 sm:p-10 lg:p-12 flex flex-col justify-center gap-6"
+            >
+              <div>
+                <p className="text-[12px] font-medium text-primary">Why MinistryCast</p>
+                <h2 className="mt-1.5 text-[24px] leading-tight font-semibold tracking-[-0.02em] text-[#E2E8F0]">
+                  Everything your Sunday needs, in one calm console.
+                </h2>
               </div>
-
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6 sm:p-8">
-                <div className="w-12 h-12 bg-pink-500/20 rounded-lg flex items-center justify-center mb-6">
-                  <BroadcastIcon />
-                </div>
-                <h4 className="text-xl font-bold mb-3 text-pink-400">Broadcast Layers</h4>
-                <p className="text-white/50 text-sm leading-relaxed">
-                  Separate outputs for stage monitors, live streams, and main
-                  projectors with independent control.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6 flex items-center gap-4">
-                  <CloudSyncIcon />
-                  <span className="text-sm font-medium text-[#E2E8F0]">Cloud Sync</span>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-6 flex items-center gap-4">
-                  <CollaborationIcon />
-                  <span className="text-sm font-medium text-[#E2E8F0]">Collaboration</span>
-                </div>
-              </div>
-
-              <img
-                src={churchInterior}
-                alt="Sanctuary"
-                className="w-full h-32 sm:h-40 object-cover rounded-xl border border-white/10 opacity-60"
-              />
-            </div>
+              <FeatureBento />
+            </aside>
           </div>
 
           <footer className="shrink-0 border-t border-white/5 bg-white/[0.02] px-6 sm:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] font-medium tracking-widest text-white/30 uppercase">

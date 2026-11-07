@@ -1,27 +1,39 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import Icon from "../../../components/Icon";
+import LibraryTable, { LibraryTile, type LibraryColumn } from "../../../components/LibraryTable";
+import { useSearchParams } from "react-router-dom";
 import ConfirmDialog from "../../../components/modals/ConfirmDialog";
 import { LoadMoreBar } from "../../../components/LoadMoreBar";
-import { Skeleton, TableSkeleton } from "../../../components/Skeleton";
+import { AdminRowsSkeleton } from "../../../components/admin/AdminSkeletons";
+import { EditorPane, Field } from "../../../components/admin/EditorPane";
+import {
+  InitialsTile,
+  PlatformHeader,
+  StatusBadge,
+  relativeTime,
+} from "../../../components/admin/PlatformHeader";
+import {
+  Badge,
+  Button,
+  Chip,
+  EmptyState,
+  Properties,
+  RowMenu,
+  ViewTabs,
+} from "../../../components/ui";
 import { PAGE_SIZE } from "../../../lib/types";
 import {
   adminDeleteAccount,
   adminListAccounts,
+  adminListDevices,
   adminUpdateAccount,
   type AdminAccount,
+  type AdminDevice,
 } from "../../../lib/admin";
 import { getSessionProfile } from "../../../lib/auth";
 import { useSearch } from "../../../lib/SearchContext";
 import { useToast } from "../../../lib/ToastContext";
-import { formatWhen, StatusChip, AdminBackLink } from "./adminUi";
-
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
-}
+import { formatWhen } from "./adminUi";
 
 function roleLabel(role: string) {
   if (role === "superadmin") return "Superadmin";
@@ -31,9 +43,14 @@ function roleLabel(role: string) {
   return role;
 }
 
+type View = "accounts" | "devices";
+type StatusFilter = "all" | "active" | "pending" | "disabled";
+
 export default function AdminAccounts() {
   const toast = useToast();
   const { query } = useSearch();
+  const [params, setParams] = useSearchParams();
+  const view: View = params.get("view") === "devices" ? "devices" : "accounts";
   const [rows, setRows] = useState<AdminAccount[]>([]);
   const [selfId, setSelfId] = useState<string | null>(null);
   const [selected, setSelected] = useState<AdminAccount | null>(null);
@@ -48,6 +65,9 @@ export default function AdminAccounts() {
   const [confirm, setConfirm] = useState<"delete" | "suspend" | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [devices, setDevices] = useState<AdminDevice[] | null>(null);
+  const [devicesLoading, setDevicesLoading] = useState(false);
 
   const load = async (fresh = false) => {
     setError("");
@@ -69,6 +89,20 @@ export default function AdminAccounts() {
     }
   };
 
+  const loadDevices = async () => {
+    setDevicesLoading(true);
+    try {
+      setDevices(await adminListDevices());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not load devices.";
+      setError(message);
+      toast.error(message);
+      setDevices((prev) => prev ?? []);
+    } finally {
+      setDevicesLoading(false);
+    }
+  };
+
   useEffect(() => {
     void (async () => {
       try {
@@ -81,30 +115,93 @@ export default function AdminAccounts() {
     })();
   }, []);
 
+  // Devices load the first time their view is opened.
+  useEffect(() => {
+    if (view === "devices" && devices === null && !devicesLoading) void loadDevices();
+  }, [view]);
+
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [query]);
+  }, [query, filter, view]);
+
+  // Deep link from the overview: /admin/accounts?open=<id>
+  const openId = params.get("open");
+  useEffect(() => {
+    if (!openId || !rows.length) return;
+    const row = rows.find((r) => r.id === openId);
+    if (row) open(row);
+    const next = new URLSearchParams(params);
+    next.delete("open");
+    setParams(next, { replace: true });
+  }, [openId, rows]);
+
+  const setView = (next: View) => {
+    const nextParams = new URLSearchParams(params);
+    if (next === "devices") nextParams.set("view", "devices");
+    else nextParams.delete("view");
+    setParams(nextParams, { replace: true });
+    if (next === "devices") {
+      setPanelOpen(false);
+      setConfirm(null);
+    }
+  };
+
+  /** Devices view: jump to the device owner's account editor. */
+  const openAccount = (userId: string) => {
+    const nextParams = new URLSearchParams(params);
+    nextParams.delete("view");
+    nextParams.set("open", userId);
+    setParams(nextParams, { replace: true });
+  };
+
+  const counts = useMemo(
+    () => ({
+      all: rows.length,
+      active: rows.filter((r) => r.status === "active").length,
+      pending: rows.filter((r) => r.status === "pending").length,
+      disabled: rows.filter((r) => r.status === "disabled").length,
+    }),
+    [rows],
+  );
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) =>
-      [row.name, row.email, row.role, row.status, row.church_name].some((value) =>
-        value.toLowerCase().includes(q),
-      ),
+    return rows.filter(
+      (row) =>
+        (filter === "all" || row.status === filter) &&
+        (!q ||
+          [row.name, row.email, row.role, row.status, row.church_name].some((value) =>
+            value.toLowerCase().includes(q),
+          )),
     );
-  }, [query, rows]);
+  }, [query, rows, filter]);
   const paged = visible.slice(0, visibleCount);
+
+  const visibleDevices = useMemo(() => {
+    const list = devices ?? [];
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((row) =>
+      [row.user_name, row.user_email, row.church_name, row.os_label, row.platform, row.app_version]
+        .some((value) => (value ?? "").toLowerCase().includes(q)),
+    );
+  }, [devices, query]);
+  const pagedDevices = visibleDevices.slice(0, visibleCount);
 
   const isSelf = selected?.id === selfId;
 
-  const open = (row: AdminAccount) => {
+  /** Make a row the subject of the editor / confirm dialogs. */
+  const pick = (row: AdminAccount) => {
     setSelected(row);
     setName(row.name);
     setRole(row.role);
     setStatus(row.status);
-    setConfirm(null);
     setSavedFlash(false);
+  };
+
+  const open = (row: AdminAccount) => {
+    pick(row);
+    setConfirm(null);
     setPanelOpen(true);
   };
 
@@ -192,329 +289,339 @@ export default function AdminAccounts() {
     }
   };
 
-  if (loading) {
-    return (
-      <section className="h-full overflow-y-auto custom-scrollbar px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-48" />
-            <Skeleton className="h-4 w-80 max-w-full" />
-          </div>
-          <TableSkeleton rows={8} />
-        </div>
-      </section>
-    );
-  }
+  const refresh = () => {
+    void load(true).catch(() => undefined);
+    if (view === "devices") void loadDevices();
+  };
+
+  const showing =
+    view === "devices"
+      ? `Showing ${pagedDevices.length} of ${visibleDevices.length}${
+          visibleDevices.length !== (devices?.length ?? 0)
+            ? ` (filtered from ${devices?.length ?? 0})`
+            : ""
+        }`
+      : `Showing ${paged.length} of ${visible.length}${
+          visible.length !== rows.length ? ` (filtered from ${rows.length})` : ""
+        }`;
+  const listLoading = view === "devices" ? devices === null || (devicesLoading && !devices.length) : loading;
 
   return (
-    <section className="h-full overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-      <div className="shrink-0 mb-2">
-        <AdminBackLink />
-      </div>
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 shrink-0 mb-6">
-        <header>
-          <h2 className="text-[clamp(1.75rem,3vw,2rem)] font-semibold tracking-[-0.01em] text-on-surface mb-1">
-            Accounts
-          </h2>
-          <p className="text-on-surface-variant text-sm">
-            Search the roster, then open a row — the list shrinks and the editor
-            slides in beside it.
-          </p>
-        </header>
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={() => void load(true)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:bg-white/5 disabled:opacity-60 self-start"
-        >
-          <span className="material-symbols-outlined text-[18px]">refresh</span>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+    <section className="h-full overflow-hidden flex flex-col">
+      <PlatformHeader
+        title="Accounts"
+        meta={loading ? undefined : `${rows.length} ${rows.length === 1 ? "account" : "accounts"}`}
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            icon="refresh"
+            disabled={refreshing || loading || devicesLoading}
+            onClick={refresh}
+          >
+            {refreshing || devicesLoading ? "Refreshing…" : "Refresh"}
+          </Button>
+        }
+      />
+
+      <div className="shrink-0 flex items-center gap-3 h-12 px-6 border-b border-white/5">
+        <ViewTabs
+          label="Accounts view"
+          value={view}
+          onChange={setView}
+          tabs={[
+            { id: "accounts", label: "Accounts", count: loading ? undefined : rows.length },
+            { id: "devices", label: "Devices", count: devices?.length },
+          ]}
+        />
+        {view === "accounts" ? (
+          <div className="flex items-center gap-1.5" role="group" aria-label="Filter by status">
+            <span aria-hidden className="w-px h-4 bg-white/10 mx-1.5" />
+            {(
+              [
+                ["all", "All"],
+                ["active", "Active"],
+                ["pending", "Pending"],
+                ["disabled", "Suspended"],
+              ] as const
+            ).map(([id, label]) => (
+              <Chip key={id} active={filter === id} onClick={() => setFilter(id)}>
+                {label}
+                <span className="tabular-nums text-outline">{counts[id]}</span>
+              </Chip>
+            ))}
+          </div>
+        ) : null}
+        {!listLoading ? (
+          <span className="ml-auto text-[12px] text-on-surface-variant tabular-nums whitespace-nowrap">
+            {showing}
+          </span>
+        ) : null}
       </div>
 
       {error ? (
-        <div className="mb-4 shrink-0 rounded-xl border border-[#ffb4ab]/30 bg-[#ffb4ab]/10 px-4 py-3 text-sm text-[#ffb4ab] flex items-center justify-between gap-3">
+        <div
+          role="alert"
+          className="shrink-0 flex items-center justify-between gap-3 px-6 py-2.5 border-b border-white/5 text-[13px] text-error"
+        >
           <span>{error}</span>
-          <button
-            type="button"
-            className="underline shrink-0"
-            onClick={() => void load(true)}
-          >
+          <Button variant="ghost" size="sm" onClick={refresh}>
             Retry
-          </button>
+          </Button>
         </div>
       ) : null}
 
-      <div className="flex-1 min-h-0 flex gap-0">
-        <div
-          className={`min-w-0 flex flex-col transition-[flex-basis,max-width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-            panelOpen
-              ? "flex-[1_1_58%] max-w-[58%] xl:max-w-none"
-              : "flex-[1_1_100%] max-w-full"
-          }`}
-        >
-          <p className="text-xs text-on-surface-variant mb-3 shrink-0">
-            Showing {paged.length} of {visible.length}
-            {visible.length !== rows.length
-              ? ` (filtered from ${rows.length})`
-              : ""}
-          </p>
-
-          {!visible.length ? (
-            <p className="text-sm text-on-surface-variant py-12 text-center">
-              {query.trim()
-                ? "No accounts match this search."
-                : "No accounts yet."}
-            </p>
+      <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-w-0 flex flex-col px-4 sm:px-6 pt-4 pb-6">
+          {view === "devices" ? (
+            listLoading ? (
+              <AdminRowsSkeleton rows={6} />
+            ) : !visibleDevices.length ? (
+              <EmptyState
+                icon="devices"
+                title={query.trim() ? "No devices match this search." : "No device installs recorded yet."}
+                body={
+                  query.trim()
+                    ? undefined
+                    : "They appear when someone opens the app while signed in."
+                }
+              />
+            ) : (
+              <DevicesTable
+                rows={pagedDevices}
+                onOpenAccount={openAccount}
+                footer={
+                  pagedDevices.length < visibleDevices.length ? (
+                    <div className="px-6 pb-6">
+                      <LoadMoreBar
+                        shown={pagedDevices.length}
+                        total={visibleDevices.length}
+                        hasMore
+                        onMore={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                      />
+                    </div>
+                  ) : null
+                }
+              />
+            )
+          ) : loading ? (
+            <AdminRowsSkeleton rows={8} />
+          ) : !visible.length ? (
+            <EmptyState
+              icon="group"
+              title={
+                query.trim()
+                  ? "No accounts match this search."
+                  : filter !== "all"
+                    ? "No accounts with this status."
+                    : "No accounts yet."
+              }
+            />
           ) : (
-            <div className="rounded-xl border border-white/5 overflow-hidden flex-1 min-h-0 flex flex-col bg-surface-container-low/40">
-              <div className="overflow-auto custom-scrollbar flex-1 min-h-0">
-                <table className="w-full text-left text-sm min-w-[640px]">
-                  <thead className="sticky top-0 bg-surface-container-lowest/95 backdrop-blur text-[11px] uppercase tracking-wider text-on-surface-variant z-[1]">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Account</th>
-                      {!panelOpen ? (
-                        <th className="px-4 py-3 font-medium hidden md:table-cell">
-                          Church
-                        </th>
-                      ) : null}
-                      <th className="px-4 py-3 font-medium">Role</th>
-                      {!panelOpen ? (
-                        <th className="px-4 py-3 font-medium hidden lg:table-cell">
-                          Activity
-                        </th>
-                      ) : null}
-                      <th className="px-4 py-3 font-medium">Status</th>
-                      <th className="px-4 py-3 font-medium w-10" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paged.map((row) => {
-                      const active = panelOpen && selected?.id === row.id;
-                      return (
-                        <tr
-                          key={row.id}
-                          className={`border-t border-white/5 cursor-pointer transition-colors ${
-                            active
-                              ? "bg-primary/10"
-                              : "hover:bg-white/[0.03]"
-                          }`}
-                          onClick={() => open(row)}
-                        >
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-9 h-9 rounded-full bg-surface-container-highest shrink-0 flex items-center justify-center text-xs font-semibold">
-                                {initials(row.name || "?")}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="font-semibold text-on-surface truncate">
-                                  {row.name}
-                                  {row.id === selfId ? (
-                                    <span className="ml-1.5 text-[10px] font-medium text-primary">
-                                      You
-                                    </span>
-                                  ) : null}
-                                </p>
-                                <p className="text-xs text-on-surface-variant truncate">
-                                  {row.email}
-                                  {panelOpen && row.church_name
-                                    ? ` · ${row.church_name}`
-                                    : ""}
-                                </p>
-                              </div>
-                            </div>
-                          </td>
-                          {!panelOpen ? (
-                            <td className="px-4 py-3 text-on-surface-variant max-w-[180px] truncate hidden md:table-cell">
-                              {row.church_name || "—"}
-                            </td>
-                          ) : null}
-                          <td className="px-4 py-3">{roleLabel(row.role)}</td>
-                          {!panelOpen ? (
-                            <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap hidden lg:table-cell">
-                              <span>
-                                {row.action_count} actions · {row.device_count}{" "}
-                                devices
-                              </span>
-                              {row.last_seen_at ? (
-                                <span className="block text-[11px] opacity-80">
-                                  Last seen {formatWhen(row.last_seen_at)}
-                                </span>
-                              ) : null}
-                            </td>
-                          ) : null}
-                          <td className="px-4 py-3">
-                            <StatusChip status={row.status} />
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className="material-symbols-outlined text-on-surface-variant text-[20px]">
-                              chevron_right
+            <LibraryTable
+              ariaLabel="Accounts"
+              className="[&>table]:min-w-0"
+              columns={[
+                { key: "account", header: "Account" },
+                ...(panelOpen
+                  ? []
+                  : ([{ key: "church", header: "Church", hideBelow: "md", className: "w-[200px]" }] as LibraryColumn[])),
+                { key: "role", header: "Role", className: "w-28" },
+                ...(panelOpen
+                  ? []
+                  : ([
+                      { key: "seen", header: "Last seen", align: "right", hideBelow: "lg", className: "w-32" },
+                    ] as LibraryColumn[])),
+                { key: "status", header: "Status", align: "right", className: "w-32" },
+              ]}
+              groups={[
+                {
+                  id: "accounts",
+                  rows: paged.map((row) => {
+                    const self = row.id === selfId;
+                    return {
+                      id: row.id,
+                      label: row.name,
+                      selected: panelOpen && selected?.id === row.id,
+                      onOpen: () => open(row),
+                      leading: <InitialsTile name={row.name} />,
+                      cells: {
+                        account: (
+                          <>
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span className="truncate">{row.name}</span>
+                              {self ? <Badge tone="accent">You</Badge> : null}
                             </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <div className="px-4 py-3 border-t border-white/5 shrink-0">
-                <LoadMoreBar
-                  shown={paged.length}
-                  total={visible.length}
-                  hasMore={paged.length < visible.length}
-                  onMore={() => setVisibleCount((n) => n + PAGE_SIZE)}
-                />
-              </div>
-            </div>
+                            <span className="block truncate text-[12px] font-normal text-on-surface-variant">
+                              {row.email}
+                              {panelOpen && row.church_name ? ` · ${row.church_name}` : ""}
+                            </span>
+                          </>
+                        ),
+                        church: <span className="block truncate">{row.church_name || "—"}</span>,
+                        role: <span className="text-on-surface">{roleLabel(row.role)}</span>,
+                        seen: (
+                          <span
+                            className="whitespace-nowrap"
+                            title={row.last_seen_at ? formatWhen(row.last_seen_at) : undefined}
+                          >
+                            {row.last_seen_at ? relativeTime(row.last_seen_at) : "Never"}
+                          </span>
+                        ),
+                        status: <StatusBadge status={row.status} />,
+                      },
+                      actions: (
+                        <RowMenu
+                          label={`Actions for ${row.name}`}
+                          items={[
+                            { label: "Edit", icon: "edit", onSelect: () => open(row) },
+                            {
+                              label: row.status === "disabled" ? "Restore" : "Suspend",
+                              icon: row.status === "disabled" ? "undo" : "block",
+                              disabled: self,
+                              onSelect: () => {
+                                pick(row);
+                                setConfirm("suspend");
+                              },
+                            },
+                            {
+                              label: "Delete",
+                              icon: "delete",
+                              danger: true,
+                              disabled: self,
+                              onSelect: () => {
+                                pick(row);
+                                setConfirm("delete");
+                              },
+                            },
+                          ]}
+                        />
+                      ),
+                    };
+                  }),
+                },
+              ]}
+              footer={
+                paged.length < visible.length ? (
+                  <div className="px-6 pb-6">
+                    <LoadMoreBar
+                      shown={paged.length}
+                      total={visible.length}
+                      hasMore
+                      onMore={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                    />
+                  </div>
+                ) : null
+              }
+            />
           )}
         </div>
 
-        <aside
-          aria-hidden={!panelOpen}
-          className={`overflow-hidden transition-[flex-basis,max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-            panelOpen
-              ? "flex-[0_0_min(420px,42%)] max-w-[420px] ml-4 opacity-100 translate-x-0"
-              : "flex-[0_0_0] max-w-0 ml-0 opacity-0 translate-x-6 pointer-events-none"
-          }`}
-        >
-          <div className="w-[min(420px,100%)] h-full min-h-[420px] rounded-xl border border-white/10 bg-surface-container-low flex flex-col overflow-hidden">
-            {selected ? (
+        <EditorPane
+          open={panelOpen && view === "accounts"}
+          onClose={closePanel}
+          title={selected?.name}
+          subtitle={selected ? `${selected.email} · ${selected.church_name || "No church"}` : null}
+          leading={selected ? <InitialsTile name={selected.name} /> : null}
+          footer={
+            selected ? (
               <>
-                <div className="flex items-start justify-between gap-3 p-5 border-b border-white/5 shrink-0">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-12 h-12 rounded-full bg-surface-container-highest shrink-0 flex items-center justify-center text-base font-semibold">
-                      {initials(selected.name || "?")}
-                    </div>
-                    <div className="min-w-0">
-                      <h2 className="text-lg font-semibold text-on-surface truncate">
-                        {selected.name}
-                      </h2>
-                      <p className="text-xs text-on-surface-variant truncate">
-                        {selected.email}
-                      </p>
-                      <p className="text-xs text-on-surface-variant truncate mt-0.5">
-                        {selected.church_name || "No church"}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={closePanel}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5"
-                    aria-label="Close"
-                  >
-                    <span className="material-symbols-outlined">close</span>
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-5">
-                  {savedFlash ? (
-                    <p className="text-sm text-primary">Changes saved.</p>
-                  ) : null}
-
-                  <div className="rounded-lg bg-white/[0.03] border border-white/5 px-3 py-2.5 text-xs text-on-surface-variant space-y-1">
-                    <p>
-                      {selected.action_count} actions · {selected.device_count}{" "}
-                      devices
-                    </p>
-                    <p>
-                      Last seen{" "}
-                      {selected.last_seen_at
-                        ? formatWhen(selected.last_seen_at)
-                        : "never"}
-                    </p>
-                  </div>
-
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant">
-                      Name
-                    </span>
-                    <input
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                      className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"
-                    />
-                  </label>
-
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant">
-                      Email
-                    </span>
-                    <input
-                      value={selected.email}
-                      disabled
-                      className="w-full bg-surface/50 border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface-variant opacity-80 cursor-not-allowed"
-                    />
-                  </label>
-
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant">
-                      Role
-                    </span>
-                    <select
-                      value={role}
-                      onChange={(event) => setRole(event.target.value)}
-                      className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"
-                    >
-                      <option value="superadmin">Superadmin</option>
-                      <option value="admin">Admin</option>
-                      <option value="producer">Producer</option>
-                      <option value="operator">Operator</option>
-                    </select>
-                  </label>
-
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant">
-                      Status
-                    </span>
-                    <select
-                      value={status}
-                      onChange={(event) => setStatus(event.target.value)}
-                      className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"
-                    >
-                      <option value="pending">Pending</option>
-                      <option value="active">Active</option>
-                      <option value="disabled">Suspended</option>
-                    </select>
-                  </label>
-
-                  {isSelf ? (
-                    <p className="text-xs text-on-surface-variant">
-                      You cannot suspend or delete your own account.
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="p-5 border-t border-white/5 flex flex-wrap gap-2 shrink-0">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void save()}
-                    className="px-4 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold disabled:opacity-50"
-                  >
-                    {busy ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    type="button"
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void save()}
+                >
+                  {busy ? "Saving…" : "Save"}
+                </Button>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     disabled={busy || isSelf}
                     onClick={() => setConfirm("suspend")}
-                    className="px-4 py-2 rounded-lg border border-white/10 text-sm disabled:opacity-50"
                   >
                     {selected.status === "disabled" ? "Restore" : "Suspend"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
                     disabled={busy || isSelf}
                     onClick={() => setConfirm("delete")}
-                    className="px-4 py-2 rounded-lg border border-error/30 text-error text-sm disabled:opacity-50"
                   >
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </>
-            ) : null}
-          </div>
-        </aside>
+            ) : null
+          }
+        >
+          {selected ? (
+            <>
+              {savedFlash ? (
+                <p className="text-[13px] text-primary">Changes saved.</p>
+              ) : null}
+
+              <Properties
+                items={[
+                  { label: "Current", value: <StatusBadge status={selected.status} /> },
+                  { label: "Actions", value: <span className="tabular-nums">{selected.action_count}</span> },
+                  { label: "Devices", value: <span className="tabular-nums">{selected.device_count}</span> },
+                  {
+                    label: "Last seen",
+                    value: selected.last_seen_at ? formatWhen(selected.last_seen_at) : "never",
+                  },
+                ]}
+              />
+
+              <div className="border-t border-white/5 pt-5 space-y-4">
+                <Field label="Name">
+                  <input
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    className="ui-input"
+                  />
+                </Field>
+                <Field label="Email">
+                  <input
+                    value={selected.email}
+                    disabled
+                    className="ui-input opacity-60 cursor-not-allowed"
+                  />
+                </Field>
+                <Field label="Role">
+                  <select
+                    value={role}
+                    onChange={(event) => setRole(event.target.value)}
+                    className="ui-input"
+                  >
+                    <option value="superadmin">Superadmin</option>
+                    <option value="admin">Admin</option>
+                    <option value="producer">Producer</option>
+                    <option value="operator">Operator</option>
+                  </select>
+                </Field>
+                <Field label="Status">
+                  <select
+                    value={status}
+                    onChange={(event) => setStatus(event.target.value)}
+                    className="ui-input"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="active">Active</option>
+                    <option value="disabled">Suspended</option>
+                  </select>
+                </Field>
+              </div>
+
+              {isSelf ? (
+                <p className="text-[12px] text-on-surface-variant">
+                  You cannot suspend or delete your own account.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </EditorPane>
       </div>
 
       <ConfirmDialog
@@ -544,5 +651,80 @@ export default function AdminAccounts() {
         confirmLabel={selected?.status === "disabled" ? "Restore" : "Suspend"}
       />
     </section>
+  );
+}
+
+function DevicesTable({
+  rows,
+  onOpenAccount,
+  footer,
+}: {
+  rows: AdminDevice[];
+  onOpenAccount: (userId: string) => void;
+  footer?: ReactNode;
+}) {
+  return (
+    <LibraryTable
+      ariaLabel="Devices"
+      className="[&>table]:min-w-0"
+      columns={[
+        { key: "account", header: "Account" },
+        { key: "church", header: "Church", hideBelow: "md", className: "w-[200px]" },
+        { key: "device", header: "Device", className: "w-[180px]" },
+        { key: "version", header: "Version", hideBelow: "sm", className: "w-24" },
+        { key: "seen", header: "Last seen", align: "right", className: "w-32" },
+      ]}
+      groups={[
+        {
+          id: "devices",
+          rows: rows.map((row) => {
+            const name = row.user_name || "Unknown";
+            const userId = row.user_id;
+            return {
+              id: row.id,
+              label: `${name}, ${row.os_label || row.platform}`,
+              onOpen: () => {
+                if (userId) onOpenAccount(userId);
+              },
+              leading: (
+                <LibraryTile>
+                  <Icon
+                    name={/app$/.test(row.os_label ?? "") ? "desktop_windows" : "devices"}
+                    className="text-[18px]"
+                  />
+                </LibraryTile>
+              ),
+              cells: {
+                account: (
+                  <>
+                    <span className="block truncate">{name}</span>
+                    <span className="block truncate text-[12px] font-normal text-on-surface-variant">
+                      {row.user_email}
+                    </span>
+                  </>
+                ),
+                church: <span className="block truncate">{row.church_name || "—"}</span>,
+                device: <span className="block truncate text-on-surface">{row.os_label || row.platform}</span>,
+                version: <span className="tabular-nums">{row.app_version || "—"}</span>,
+                seen: (
+                  <span className="whitespace-nowrap" title={formatWhen(row.last_seen_at)}>
+                    {relativeTime(row.last_seen_at)}
+                  </span>
+                ),
+              },
+              actions: userId ? (
+                <RowMenu
+                  label={`Actions for ${name}'s device`}
+                  items={[
+                    { label: "Open account", icon: "person", onSelect: () => onOpenAccount(userId) },
+                  ]}
+                />
+              ) : undefined,
+            };
+          }),
+        },
+      ]}
+      footer={footer}
+    />
   );
 }

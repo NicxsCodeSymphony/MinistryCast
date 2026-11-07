@@ -13,6 +13,10 @@ import {
 import { peekQuery } from "../../lib/offline/queryCache";
 import { usePrefs } from "../../lib/PrefsContext";
 import { useToast } from "../../lib/ToastContext";
+import Icon from "../../components/Icon";
+import LibraryTable from "../../components/LibraryTable";
+import { BentoCard, BentoGrid, Stat } from "../../components/bento";
+import { Badge, EmptyState, SearchField } from "../../components/ui";
 
 function initials(name: string) {
   return name
@@ -31,10 +35,10 @@ function roleLabel(role: string, t: (key: string) => string) {
   return role;
 }
 
-function statusTone(status: string) {
-  if (status === "active") return "bg-emerald-500/15 text-emerald-300";
-  if (status === "pending") return "bg-amber-500/15 text-amber-200";
-  return "bg-white/10 text-on-surface-variant";
+function statusTone(status: string): "success" | "warning" | "neutral" {
+  if (status === "active") return "success";
+  if (status === "pending") return "warning";
+  return "neutral";
 }
 
 function statusLabel(status: string, t: (key: string) => string) {
@@ -122,6 +126,9 @@ export default function TeamAccountsPanel({ myUserId }: TeamAccountsPanelProps) 
     );
   }, [team, query]);
 
+  const activeCount = team.filter((row) => row.status === "active").length;
+  const adminCount = team.filter((row) => row.role === "admin" || row.role === "superadmin").length;
+
   const openMember = (row: ChurchTeamAccount) => {
     setSelected(row);
     setName(row.name);
@@ -201,25 +208,27 @@ export default function TeamAccountsPanel({ myUserId }: TeamAccountsPanelProps) 
 
   if (loading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-8">
         <div className="space-y-2">
-          <Skeleton className="h-7 w-48" />
-          <Skeleton className="h-4 w-72 max-w-full" />
+          <Skeleton className="h-6 w-44" />
+          <Skeleton className="h-3.5 w-80 max-w-full" />
         </div>
-        <Skeleton className="h-10 w-full rounded-xl" />
+        <Skeleton className="h-8 w-full rounded-lg" />
         <TableSkeleton rows={6} />
       </div>
     );
   }
 
+  const label = "block text-[12px] text-on-surface-variant mb-1.5";
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold text-on-surface">
+    <div className="space-y-8">
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[20px] font-semibold tracking-tight text-on-surface">
             {t("settings.team")}
           </h2>
-          <p className="text-sm text-on-surface-variant mt-2">
+          <p className="mt-1 text-[13px] text-on-surface-variant">
             {t("settings.teamPanelHint")}
           </p>
         </div>
@@ -227,56 +236,79 @@ export default function TeamAccountsPanel({ myUserId }: TeamAccountsPanelProps) 
           type="button"
           disabled={refreshing}
           onClick={() => void load(true)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:bg-white/5 disabled:opacity-60"
+          className="ui-btn ui-btn-ghost shrink-0"
         >
-          <span className="material-symbols-outlined text-[18px]">refresh</span>
+          <Icon name="refresh" className={`text-[15px] ${refreshing ? "animate-spin" : ""}`} />
           {refreshing ? t("settings.teamRefreshing") : t("settings.teamRefresh")}
         </button>
       </div>
 
       {error ? (
-        <div className="rounded-xl border border-[#ffb4ab]/30 bg-[#ffb4ab]/10 px-4 py-3 text-sm text-[#ffb4ab] flex items-center justify-between gap-3">
+        <div className="rounded-[10px] border border-error/30 px-4 py-3 text-[13px] text-error flex items-center justify-between gap-3">
           <span>{error}</span>
-          <button
-            type="button"
-            className="underline shrink-0"
-            onClick={() => void load(true)}
-          >
+          <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" onClick={() => void load(true)}>
             {t("settings.teamRetry")}
           </button>
         </div>
       ) : null}
 
+      <BentoGrid className="auto-rows-auto">
+        <BentoCard span={4} aria-label={t("settings.teamMember")}>
+          <Stat
+            label="Members"
+            value={team.length}
+            hint={`${adminCount} ${adminCount === 1 ? "admin" : "admins"}`}
+          />
+        </BentoCard>
+        <BentoCard span={4} aria-label={t("settings.teamStatusActive")}>
+          <Stat
+            label={t("settings.teamStatusActive")}
+            value={activeCount}
+            hint={team.length ? `${Math.round((activeCount / team.length) * 100)}% of team` : undefined}
+          />
+        </BentoCard>
+        <BentoCard span={4} aria-label={t("settings.teamStatusPending")}>
+          <Stat
+            label={t("settings.teamStatusPending")}
+            value={approvals.length}
+            hint={approvals.length ? "Waiting for you" : "All caught up"}
+          />
+        </BentoCard>
+      </BentoGrid>
+
       {approvals.length ? (
-        <section className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-amber-200 text-[20px]">
-              verified_user
-            </span>
-            <h3 className="text-sm font-semibold text-on-surface">
+        <section className="rounded-[14px] border border-primary/30 bg-primary/5">
+          <div className="px-5 pt-4 pb-3 flex items-center gap-2">
+            <h3 className="text-[13px] font-semibold text-on-surface">
               {t("settings.teamPendingApprovals", { n: approvals.length })}
             </h3>
+            <Badge tone="warning">{t("settings.teamStatusPending")}</Badge>
           </div>
-          <ul className="space-y-2">
+          <ul className="border-t border-white/5">
             {approvals.map((row) => (
               <li
                 key={row.applicant_id}
-                className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg bg-surface-container/60 px-3 py-2.5"
+                className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-3 border-t border-white/5 first:border-t-0"
               >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-on-surface truncate">
-                    {row.applicant_name}
-                  </p>
-                  <p className="text-xs text-on-surface-variant truncate">
-                    {row.applicant_email}
-                  </p>
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <span className="w-8 h-8 rounded-full bg-surface-container-highest shrink-0 flex items-center justify-center text-[11px] font-semibold text-on-surface-variant">
+                    {initials(row.applicant_name || "?")}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-on-surface truncate">
+                      {row.applicant_name}
+                    </p>
+                    <p className="text-[12px] text-on-surface-variant truncate">
+                      {row.applicant_email}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 shrink-0">
                   <button
                     type="button"
                     disabled={busyApproval === row.applicant_id}
                     onClick={() => void onApproval(row, "reject")}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/10 hover:bg-white/5 disabled:opacity-50"
+                    className="ui-btn ui-btn-ghost ui-btn-sm"
                   >
                     {t("settings.teamReject")}
                   </button>
@@ -284,7 +316,7 @@ export default function TeamAccountsPanel({ myUserId }: TeamAccountsPanelProps) 
                     type="button"
                     disabled={busyApproval === row.applicant_id}
                     onClick={() => void onApproval(row, "approve")}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-on-primary disabled:opacity-50"
+                    className="ui-btn ui-btn-primary ui-btn-sm"
                   >
                     {t("settings.teamApprove")}
                   </button>
@@ -295,247 +327,193 @@ export default function TeamAccountsPanel({ myUserId }: TeamAccountsPanelProps) 
         </section>
       ) : null}
 
-      <div className="relative">
-        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant">
-          search
-        </span>
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("settings.teamSearch")}
-          className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-surface border border-outline-variant text-sm outline-none focus:ring-2 focus:ring-primary"
-        />
-      </div>
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-[13px] font-semibold text-on-surface flex-1">
+            {t("settings.teamMember")}
+            <span className="ml-2 font-normal text-on-surface-variant tabular-nums">
+              {visible.length}
+            </span>
+          </h3>
+          <SearchField
+            value={query}
+            onChange={setQuery}
+            placeholder={t("settings.teamSearch")}
+            className="w-full max-w-[280px]"
+          />
+        </div>
 
-      {!visible.length ? (
-        <p className="text-sm text-on-surface-variant py-8 text-center">
-          {query ? t("settings.teamEmptySearch") : t("settings.teamEmpty")}
-        </p>
-      ) : (
-        <div className="rounded-xl border border-white/5 overflow-hidden">
-          <div className="overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left text-sm min-w-[640px]">
-              <thead className="bg-surface-container-lowest/80 text-[11px] uppercase tracking-wider text-on-surface-variant">
-                <tr>
-                  <th className="px-4 py-3 font-medium">
-                    {t("settings.teamMember")}
-                  </th>
-                  <th className="px-4 py-3 font-medium">
-                    {t("settings.teamContact")}
-                  </th>
-                  <th className="px-4 py-3 font-medium">
-                    {t("settings.teamRole")}
-                  </th>
-                  <th className="px-4 py-3 font-medium">
-                    {t("settings.teamStatus")}
-                  </th>
-                  <th className="px-4 py-3 font-medium w-12" />
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-t border-white/5 hover:bg-white/[0.03] cursor-pointer"
-                    onClick={() => openMember(row)}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-full overflow-hidden bg-surface-container-highest shrink-0 flex items-center justify-center text-xs font-semibold">
-                          {row.avatar_url ? (
-                            <img
-                              src={row.avatar_url}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            initials(row.name || "?")
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-semibold text-on-surface truncate">
-                            {row.name}
-                            {row.id === myUserId ? (
-                              <span className="ml-1.5 text-[10px] font-medium text-primary">
-                                {t("settings.teamYou")}
-                              </span>
-                            ) : null}
-                          </p>
-                          <p className="text-xs text-on-surface-variant truncate">
-                            {row.email}
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-on-surface-variant">
-                      {row.phone?.trim() || "—"}
-                    </td>
-                    <td className="px-4 py-3">{roleLabel(row.role, t)}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wide ${statusTone(
-                          row.status,
-                        )}`}
-                      >
+        {!visible.length ? (
+          <div className="card-surface rounded-xl border border-white/5">
+            <EmptyState
+              icon="group"
+              title={query ? t("settings.teamEmptySearch") : t("settings.teamEmpty")}
+            />
+          </div>
+        ) : (
+          <LibraryTable
+            ariaLabel={t("settings.team")}
+            className="max-h-[560px]"
+            columns={[
+              { key: "member", header: t("settings.teamMember") },
+              { key: "contact", header: t("settings.teamContact"), hideBelow: "md" },
+              { key: "role", header: t("settings.teamRole") },
+              { key: "status", header: t("settings.teamStatus") },
+            ]}
+            groups={[
+              {
+                id: "team",
+                rows: visible.map((row) => ({
+                  id: row.id,
+                  label: row.name || row.email,
+                  onOpen: () => openMember(row),
+                  selected: sheetOpen && selected?.id === row.id,
+                  leading: (
+                    <span className="w-8 h-8 rounded-full overflow-hidden bg-surface-container-highest border border-white/10 flex items-center justify-center text-[11px] font-semibold text-on-surface-variant">
+                      {row.avatar_url ? (
+                        <img src={row.avatar_url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        initials(row.name || "?")
+                      )}
+                    </span>
+                  ),
+                  cells: {
+                    member: (
+                      <span className="block min-w-0">
+                        <span className="block truncate">
+                          {row.name}
+                          {row.id === myUserId ? (
+                            <span className="ml-1.5 text-[11px] font-normal text-primary">
+                              {t("settings.teamYou")}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="block text-[12px] font-normal text-on-surface-variant truncate">
+                          {row.email}
+                        </span>
+                      </span>
+                    ),
+                    contact: <span className="tabular-nums">{row.phone?.trim() || "—"}</span>,
+                    role: <span className="text-on-surface">{roleLabel(row.role, t)}</span>,
+                    status: (
+                      <Badge tone={statusTone(row.status)}>
                         {statusLabel(row.status, t)}
                         {row.approval_phase ? ` · ${row.approval_phase}` : ""}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="material-symbols-outlined text-on-surface-variant text-[20px]">
-                        chevron_right
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                      </Badge>
+                    ),
+                  },
+                })),
+              },
+            ]}
+          />
+        )}
+      </div>
 
       <Sheet open={sheetOpen} onClose={closeSheet} labelledBy="team-sheet-title">
         {selected ? (
           <>
-            <div className="flex items-start justify-between gap-3 p-5 border-b border-white/5">
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-white/5">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-14 h-14 rounded-full overflow-hidden bg-surface-container-highest shrink-0 flex items-center justify-center text-lg font-semibold">
+                <div className="w-10 h-10 rounded-full overflow-hidden bg-surface-container-highest shrink-0 flex items-center justify-center text-[13px] font-semibold text-on-surface-variant">
                   {selected.avatar_url ? (
-                    <img
-                      src={selected.avatar_url}
-                      alt=""
-                      className="w-full h-full object-cover"
-                    />
+                    <img src={selected.avatar_url} alt="" className="w-full h-full object-cover" />
                   ) : (
                     initials(selected.name || "?")
                   )}
                 </div>
                 <div className="min-w-0">
-                  <h2
-                    id="team-sheet-title"
-                    className="text-lg font-semibold text-on-surface truncate"
-                  >
+                  <h2 id="team-sheet-title" className="text-[15px] font-semibold text-on-surface truncate">
                     {selected.name}
                   </h2>
-                  <p className="text-xs text-on-surface-variant truncate">
-                    {selected.email}
-                  </p>
+                  <p className="text-[12px] text-on-surface-variant truncate">{selected.email}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={closeSheet}
-                className="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5"
+                className="ui-icon-btn"
                 aria-label={t("settings.teamClose")}
               >
-                <span className="material-symbols-outlined">close</span>
+                <Icon name="close" className="text-[16px]" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-5">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
               {savedFlash ? (
-                <p className="text-sm text-primary">{t("settings.teamSavedFlash")}</p>
+                <p className="text-[13px] text-primary">{t("settings.teamSavedFlash")}</p>
               ) : null}
 
               <div>
-                <label className="text-[11px] font-medium text-on-surface-variant block mb-2 uppercase tracking-widest">
-                  {t("settings.displayName")}
-                </label>
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"
-                />
+                <label className={label}>{t("settings.displayName")}</label>
+                <input value={name} onChange={(event) => setName(event.target.value)} className="ui-input" />
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-on-surface-variant block mb-2 uppercase tracking-widest">
-                  {t("settings.teamPhone")}
-                </label>
+                <label className={label}>{t("settings.teamPhone")}</label>
                 <input
                   value={phone}
                   onChange={(event) => setPhone(event.target.value)}
                   placeholder={t("settings.teamPhoneHint")}
-                  className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"
+                  className="ui-input"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-on-surface-variant block mb-2 uppercase tracking-widest">
-                  {t("settings.teamEmail")}
-                </label>
+                <label className={label}>{t("settings.teamEmail")}</label>
                 <input
                   value={selected.email}
                   disabled
-                  className="w-full bg-surface/50 border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface-variant opacity-80 cursor-not-allowed"
+                  className="ui-input opacity-60 cursor-not-allowed"
                 />
-                <p className="text-[11px] text-on-surface-variant mt-1.5">
+                <p className="text-[12px] text-on-surface-variant mt-1.5">
                   {t("settings.teamEmailHint")}
                 </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[11px] font-medium text-on-surface-variant block mb-2 uppercase tracking-widest">
-                    {t("settings.teamRole")}
-                  </label>
-                  <select
-                    value={role}
-                    onChange={(event) => setRole(event.target.value)}
-                    className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"
-                  >
+                  <label className={label}>{t("settings.teamRole")}</label>
+                  <select value={role} onChange={(event) => setRole(event.target.value)} className="ui-input">
                     <option value="admin">{t("settings.teamRoleAdmin")}</option>
-                    <option value="producer">
-                      {t("settings.teamRoleProducer")}
-                    </option>
-                    <option value="operator">
-                      {t("settings.teamRoleMember")}
-                    </option>
+                    <option value="producer">{t("settings.teamRoleProducer")}</option>
+                    <option value="operator">{t("settings.teamRoleMember")}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="text-[11px] font-medium text-on-surface-variant block mb-2 uppercase tracking-widest">
-                    {t("settings.teamStatus")}
-                  </label>
+                  <label className={label}>{t("settings.teamStatus")}</label>
                   <select
                     value={status}
                     onChange={(event) => setStatus(event.target.value)}
                     disabled={selected.id === myUserId}
-                    className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none disabled:opacity-60"
+                    className="ui-input disabled:opacity-60"
                   >
-                    <option value="active">
-                      {t("settings.teamStatusActive")}
-                    </option>
-                    <option value="pending">
-                      {t("settings.teamStatusPending")}
-                    </option>
-                    <option value="disabled">
-                      {t("settings.teamStatusDisabled")}
-                    </option>
+                    <option value="active">{t("settings.teamStatusActive")}</option>
+                    <option value="pending">{t("settings.teamStatusPending")}</option>
+                    <option value="disabled">{t("settings.teamStatusDisabled")}</option>
                   </select>
                 </div>
               </div>
             </div>
 
-            <div className="p-5 border-t border-white/5 space-y-2">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => void save()}
-                className="w-full px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-semibold disabled:opacity-60"
-              >
-                {saving ? t("common.saving") : t("settings.teamSaveChanges")}
-              </button>
+            <div className="px-5 py-4 border-t border-white/5 flex items-center gap-2">
               {selected.id !== myUserId ? (
                 <button
                   type="button"
                   disabled={saving || selected.status === "disabled"}
                   onClick={() => setConfirmBlock(true)}
-                  className="w-full px-4 py-2.5 rounded-lg border border-[#ffb4ab]/30 text-[#ffb4ab] text-sm font-semibold hover:bg-[#ffb4ab]/10 disabled:opacity-50"
+                  className="ui-btn ui-btn-danger"
                 >
                   {t("settings.teamBlock")}
                 </button>
               ) : null}
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void save()}
+                className="ui-btn ui-btn-primary ml-auto"
+              >
+                {saving ? t("common.saving") : t("settings.teamSaveChanges")}
+              </button>
             </div>
           </>
         ) : null}

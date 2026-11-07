@@ -28,6 +28,7 @@ import {
   type StageTransition,
 } from "../../lib/stageTransition";
 import type { LiveCue, Presentation, Setlist } from "../../lib/types";
+import Icon from "../../components/Icon";
 
 export default function Output() {
   const [params] = useSearchParams();
@@ -43,7 +44,8 @@ export default function Output() {
   const [setlist, setSetlist] = useState<Setlist | null>(null);
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
   const [lyricSize, setLyricSize] = useState(DEFAULT_STAGE_TEXT_SIZE);
-  const [stageBg, setStageBg] = useState<StageBackgroundId>("sanctuary");
+  // Church default; the presented setlist's own background wins when set.
+  const [churchBg, setChurchBg] = useState<StageBackgroundId>("sanctuary");
   const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>(DEFAULT_LYRIC_TEXT_STYLE);
   const [transitionStyle, setTransitionStyle] = useState<StageTransition>("dissolve");
   const [chords, setChords] = useState<ChordDisplay>(readChordDisplay);
@@ -72,7 +74,7 @@ export default function Output() {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
           setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
-          setStageBg(asStageBackground(settings?.stage_background));
+          setChurchBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
         }
       } catch (err) {
@@ -101,7 +103,7 @@ export default function Output() {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
           setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
-          setStageBg(asStageBackground(settings?.stage_background));
+          setChurchBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
         })
         .catch(() => undefined);
@@ -113,12 +115,14 @@ export default function Output() {
       setFont(asStageFont(snapshot.font));
       setLyricSize(snapshot.lyricSize || DEFAULT_STAGE_TEXT_SIZE);
       setLyricStyle(snapshot.lyricStyle);
-      setStageBg(asStageBackground(snapshot.stageBg));
+      if (!snapshot.setlist?.stage_background) setChurchBg(asStageBackground(snapshot.stageBg));
       setTransitionStyle(asStageTransition(snapshot.transitionStyle));
       if (snapshot.chords) setChords(asChordDisplay(snapshot.chords));
     });
     reload();
-    const timer = window.setInterval(reload, 800);
+    // Content changes arrive via subscribeContent (BroadcastChannel / storage /
+    // desktop events). This is only a slow safety net, not the update path.
+    const timer = window.setInterval(reload, 10_000);
     return () => {
       unsubContent();
       unsubStage();
@@ -130,6 +134,9 @@ export default function Output() {
   const index = presentation ? cueIndexFor(presentation, cues) : 0;
   const cue: LiveCue | undefined = cues[index];
   const ms = presentation?.transition_ms ?? 400;
+  const stageBg: StageBackgroundId = setlist?.stage_background
+    ? asStageBackground(setlist.stage_background)
+    : churchBg;
   const darkText = stageUsesDarkText(stageBg);
 
   useEffect(() => {
@@ -176,10 +183,8 @@ export default function Output() {
 
       {presentation?.show_logo && !presentation.is_blackout ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <div className="w-28 h-28 rounded-2xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-            <span className="material-symbols-outlined filled text-on-primary text-6xl">
-              church
-            </span>
+          <div className="w-28 h-28 rounded-2xl bg-primary-container flex items-center justify-center">
+            <Icon name="church" className="filled text-on-primary text-6xl" />
           </div>
         </div>
       ) : null}

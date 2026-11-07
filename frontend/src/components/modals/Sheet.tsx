@@ -49,7 +49,7 @@ export default function Sheet({
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
-        className={`relative ml-auto h-full ${widthClassName} bg-surface-container-low border-l border-white/10 shadow-2xl flex flex-col modal-in ${
+        className={`relative ml-auto h-full ${widthClassName} modal-surface border-l shadow-2xl flex flex-col modal-in ${
           side === "left" ? "mr-auto ml-0 border-l-0 border-r" : ""
         }`}
       >

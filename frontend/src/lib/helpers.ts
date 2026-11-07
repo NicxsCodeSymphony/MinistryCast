@@ -1,4 +1,4 @@
-import { readCachedSessionProfile } from "./auth";
+import { getSessionProfile, readCachedSessionProfile } from "./auth";
 import { isChordSymbol, isLyricSectionHeading } from "./chords";
 import { supabase } from "./supabase";
 import { readSetlistViewChurchId } from "./viewChurch";
@@ -19,12 +19,8 @@ export async function requireChurchId() {
   }
   const cached = cachedProfile?.church?.id;
   if (cached) return cached;
-  const { data, error } = await supabase.rpc("get_session_profile");
-  if (error) throw asError(error, "Could not load your account.");
-  const profile = data as {
-    user?: { role?: string } | null;
-    church?: { id?: string } | null;
-  } | null;
+  // Shares the in-flight / recent profile request instead of a second RPC.
+  const profile = await getSessionProfile();
   if (profile?.user?.role === "superadmin") {
     const viewId = readSetlistViewChurchId();
     if (viewId) return viewId;
@@ -75,6 +71,15 @@ export function formatDuration(seconds: number | null | undefined) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** `YYYY-MM-DD` for a date input, in local time (slicing the ISO string gives the UTC day). */
+export function localDateInput(iso: string | null | undefined) {
+  if (!iso) return "";
+  const at = new Date(iso);
+  if (!Number.isFinite(at.getTime())) return iso.slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
 }
 
 export function formatRelative(iso: string | null | undefined) {

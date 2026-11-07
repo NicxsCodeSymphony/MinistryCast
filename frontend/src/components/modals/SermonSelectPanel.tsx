@@ -5,6 +5,7 @@ import { LoadMoreBar } from "../LoadMoreBar";
 import { PAGE_SIZE, type Sermon } from "../../lib/types";
 import { TableSkeleton } from "../Skeleton";
 import { newServiceItem, type ServiceItem } from "./serviceItem";
+import Icon from "../Icon";
 
 const CREATE_ID = "create-new";
 
@@ -113,7 +114,7 @@ export default function SermonSelectPanel({
         className="absolute top-4 right-4 z-50 w-9 h-9 rounded-full bg-surface-container-high/50 flex items-center justify-center border border-white/5 text-on-surface-variant hover:text-on-surface"
         aria-label="Close"
       >
-        <span className="material-symbols-outlined text-[20px]">close</span>
+        <Icon name="close" className="text-[20px]" />
       </button>
       <header className="px-5 pt-4 pb-3 border-b border-white/10 pr-14 shrink-0">
         <button
@@ -121,7 +122,7 @@ export default function SermonSelectPanel({
           onClick={onBack}
           className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-on-surface-variant hover:text-primary"
         >
-          <span className="material-symbols-outlined text-[14px]">arrow_back</span>
+          <Icon name="arrow_back" className="text-[14px]" />
           {setlistName}
         </button>
         <h2 className="text-xl font-bold text-on-surface mt-1">Select Sermon</h2>
@@ -143,7 +144,7 @@ export default function SermonSelectPanel({
               : "border-dashed border-white/20 hover:bg-white/5"
           }`}
         >
-          <span className="material-symbols-outlined text-[18px]">add</span>
+          <Icon name="add" className="text-[18px]" />
           Create New Sermon
         </button>
         {selectedId === CREATE_ID ? (
@@ -191,7 +192,7 @@ export default function SermonSelectPanel({
             <button
               type="submit"
               disabled={saving || !draft.title.trim()}
-              className="w-full py-2.5 text-sm bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold rounded-xl disabled:opacity-40"
+              className="w-full py-2.5 text-sm btn-primary font-bold rounded-xl disabled:opacity-40"
             >
               {saving ? "Saving…" : "Add to Setlist"}
             </button>
@@ -234,7 +235,7 @@ export default function SermonSelectPanel({
           <button
             type="button"
             onClick={() => addExisting(selected)}
-            className="w-full py-3.5 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold rounded-xl"
+            className="w-full py-3.5 btn-primary font-bold rounded-xl"
           >
             Add {selected.title}
           </button>

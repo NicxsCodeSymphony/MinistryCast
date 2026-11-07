@@ -1,4 +1,10 @@
 import { test, expect } from "@playwright/test";
+import { installSupabaseMock, requestLog } from "./support/supabaseMock";
+
+// Never let the register test create a real account on the hosted project.
+test.beforeEach(async ({ page }) => {
+  await installSupabaseMock(page);
+});
 
 test("welcome page loads sign-in fields", async ({ page }) => {
   await page.goto("/");
@@ -25,6 +31,7 @@ test("register page calls register-account", async ({ page }) => {
     contentType: "text/plain",
   });
 
-  expect(response.status()).not.toBe(404);
-  expect([200, 400]).toContain(response.status());
+  expect(response.status()).toBe(200);
+  const sent = requestLog.find((entry) => entry.path.endsWith("/register-account"));
+  expect(JSON.parse(sent?.body || "{}")).toMatchObject({ email: "playwright@example.com" });
 });

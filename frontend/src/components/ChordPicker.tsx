@@ -7,6 +7,7 @@ import {
   placeSheetChord,
   sheetChordAt,
 } from "../lib/chords";
+import Icon from "./Icon";
 
 type Anchor = {
   end: number;
@@ -282,7 +283,7 @@ export default function ChordPicker({
           onClick={() => apply(null)}
           className="w-full h-8 rounded-lg border border-error/20 text-error hover:bg-error/10 text-xs font-semibold flex items-center justify-center gap-1"
         >
-          <span className="material-symbols-outlined text-[16px]">close</span>
+          <Icon name="close" className="text-[16px]" />
           Remove {anchor.current}
         </button>
       ) : null}

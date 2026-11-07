@@ -11,6 +11,7 @@ import {
   type PickerCategoryColor,
 } from "../../lib/categoryColor";
 import type { CategoryColor } from "../../lib/types";
+import Icon from "../Icon";
 
 export type CategoryFormValues = {
   name: string;
@@ -87,7 +88,9 @@ export default function CategoryFormModal({
     if (!values.name.trim() || saving) return;
     setSaving(true);
     try {
-      await onSubmit(values);
+      await draft.submit(async () => {
+        await onSubmit(values);
+      });
     } finally {
       setSaving(false);
     }
@@ -126,7 +129,7 @@ export default function CategoryFormModal({
           className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition-colors text-on-surface-variant"
           aria-label="Close"
         >
-          <span className="material-symbols-outlined text-[20px]">close</span>
+          <Icon name="close" className="text-[20px]" />
         </button>
       </div>
 
@@ -214,13 +217,9 @@ export default function CategoryFormModal({
                   aria-label={icon.label}
                   aria-pressed={selected}
                 >
-                  <span
-                    className={`material-symbols-outlined text-[22px] ${
+                  <Icon name={icon.id} className={`text-[22px] ${
                       selected ? "filled" : ""
-                    }`}
-                  >
-                    {icon.id}
-                  </span>
+                    }`} />
                   <span className="text-[9px] leading-tight text-center font-medium">
                     {icon.label}
                   </span>
@@ -265,9 +264,7 @@ export default function CategoryFormModal({
           <div
             className={`w-10 h-10 rounded-lg flex items-center justify-center ${preview.icon}`}
           >
-            <span className="material-symbols-outlined text-[20px] filled">
-              {values.icon}
-            </span>
+            <Icon name={values.icon} className="text-[20px] filled" />
           </div>
           <div>
             <p className="text-[12px] font-semibold tracking-[0.05em] text-primary uppercase opacity-60">
@@ -293,7 +290,7 @@ export default function CategoryFormModal({
           type="button"
           disabled={saving || !values.name.trim()}
           onClick={() => void submitCategory()}
-          className="flex-[2] bg-gradient-to-b from-primary-container to-on-primary-fixed-variant text-on-primary text-xs font-bold py-3 rounded-xl shadow-lg shadow-primary/20 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-60 disabled:active:scale-100 flex items-center justify-center gap-2"
+          className="flex-[2] btn-primary text-xs font-bold py-3 rounded-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-60 disabled:active:scale-100 flex items-center justify-center gap-2"
         >
           {saving ? (
             <span className="w-4 h-4 rounded-full border-2 border-on-primary/30 border-t-on-primary animate-spin" />

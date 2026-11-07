@@ -8,6 +8,7 @@ import type { LyricTextStyle } from "../lib/lyricTextStyle";
 import { stageUsesDarkText, type StageBackgroundId } from "../lib/stageBackgrounds";
 import { DEFAULT_STAGE_FONT, stageFontFamily } from "../lib/stageFonts";
 import type { LiveCue } from "../lib/types";
+import Icon from "./Icon";
 
 const OUTPUT_WIDTH = 1920;
 const OUTPUT_HEIGHT = 1080;
@@ -97,7 +98,7 @@ export function MiniStage({
     <ScaledStage stageBg={stageBg} highlight={highlight}>
       {logo ? (
         <div className="h-full w-full flex items-center justify-center">
-          <span className="material-symbols-outlined filled text-primary text-[160px]">church</span>
+          <Icon name="church" className="filled text-primary text-[160px]" />
         </div>
       ) : cue ? (
         <CueStage
@@ -133,12 +134,31 @@ export function StagePointEditor({
   focusKey?: string | number | null;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
-  const [overflowing, setOverflowing] = useState(false);
   const darkText = stageUsesDarkText(stageBg);
+  const maxPx = sermonSizePx(size);
+  /** Font size after shrink-to-fit; the projector (CueStage) shrinks the same way. */
+  const [fitPx, setFitPx] = useState(maxPx);
 
   function measureOverflow() {
     const el = frameRef.current?.querySelector<HTMLElement>(".point-editor");
-    setOverflowing(Boolean(el && el.scrollHeight > el.clientHeight + 2));
+    if (!el || el.clientHeight < 8) return;
+    const tooBig = (px: number) => {
+      el.style.fontSize = `${px}px`;
+      return el.scrollHeight > el.clientHeight + 2;
+    };
+    let px = maxPx;
+    if (tooBig(maxPx)) {
+      let lo = 1;
+      let hi = maxPx;
+      for (let i = 0; i < 16; i += 1) {
+        const mid = (lo + hi) / 2;
+        if (tooBig(mid)) hi = mid;
+        else lo = mid;
+      }
+      px = Math.max(1, Math.floor(lo));
+    }
+    el.style.fontSize = `${px}px`;
+    setFitPx(px);
   }
 
   useLayoutEffect(() => {
@@ -185,15 +205,15 @@ export function StagePointEditor({
             : "text-white caret-white drop-shadow-[0_6px_24px_rgba(0,0,0,0.65)]"
         }`}
         editorStyle={{
-          fontSize: `${sermonSizePx(size)}px`,
+          fontSize: `${fitPx}px`,
           padding: "4% 5%",
           fontFamily: stageFontFamily(DEFAULT_STAGE_FONT),
         }}
       />
-      {overflowing ? (
-        <p className="text-[11px] text-amber-300">
-          This point is taller than the screen, so it will shrink to fit. Try a smaller size or
-          split it into two slides.
+      {fitPx < maxPx ? (
+        <p className="text-[11px] text-on-surface-variant">
+          Long point: the text is shrunk to fit the screen ({fitPx}px of {maxPx}px). Split it into
+          two slides if it gets too small to read.
         </p>
       ) : null}
     </div>
@@ -358,7 +378,7 @@ export function ToolButton({
           : "border-white/10 hover:bg-white/5"
       }`}
     >
-      <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      <Icon name={icon} className="text-[18px]" />
     </button>
   );
 }

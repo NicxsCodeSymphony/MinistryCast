@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import Icon from "../components/Icon";
 
 export type ToastKind = "success" | "error" | "warning" | "info";
 
@@ -34,30 +35,18 @@ type ToastApi = {
 
 const ToastContext = createContext<ToastApi | null>(null);
 
-const STYLE: Record<
-  ToastKind,
-  { icon: string; bar: string; iconClass: string }
-> = {
-  success: {
-    icon: "check_circle",
-    bar: "bg-emerald-400",
-    iconClass: "text-emerald-400",
-  },
-  error: {
-    icon: "error",
-    bar: "bg-[#ffb4ab]",
-    iconClass: "text-[#ffb4ab]",
-  },
-  warning: {
-    icon: "warning",
-    bar: "bg-amber-400",
-    iconClass: "text-amber-400",
-  },
-  info: {
-    icon: "info",
-    bar: "bg-primary",
-    iconClass: "text-primary",
-  },
+const STYLE: Record<ToastKind, { icon: string; tone: string; label: string }> = {
+  success: { icon: "check", tone: "toast-success", label: "Done" },
+  error: { icon: "close", tone: "toast-error", label: "Oops" },
+  warning: { icon: "warning", tone: "toast-warning", label: "Heads up" },
+  info: { icon: "info", tone: "toast-info", label: "Note" },
+};
+
+const DURATION: Record<ToastKind, number> = {
+  success: 3800,
+  info: 3800,
+  warning: 5600,
+  error: 7000,
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -88,7 +77,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       if (!text) return;
       const id = crypto.randomUUID();
       setToasts((prev) => [...prev.slice(-4), { id, kind, message: text }]);
-      const ms = kind === "error" ? 7000 : kind === "warning" ? 5600 : 3800;
+      const ms = DURATION[kind];
       timers.current.set(
         id,
         window.setTimeout(() => dismiss(id), ms),
@@ -113,26 +102,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={api}>
       {children}
       {createPortal(
-        <div className="pointer-events-none fixed bottom-6 right-6 z-[200] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2">
+        // Bottom-right stack. Toasts are click-through (only their close button
+        // takes clicks) so they never block the buttons underneath them.
+        <div
+          className="pointer-events-none fixed bottom-6 right-6 z-[200] flex w-[min(22rem,calc(100vw-3rem))] flex-col items-end gap-3"
+          aria-live="polite"
+        >
           {tasks.map((row) => (
-            <div
-              key={row.id}
-              className="pointer-events-auto toast-in relative overflow-hidden rounded-xl border border-primary/25 bg-surface-container-high shadow-2xl"
-              role="status"
-              aria-live="polite"
-            >
-              <div className="absolute inset-y-0 left-0 w-1 bg-primary/70 animate-pulse" />
-              <div className="flex items-center gap-3 py-3 pl-4 pr-4">
-                <span className="material-symbols-outlined text-[20px] text-primary animate-spin">
-                  progress_activity
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/80">
-                    In progress
-                  </p>
-                  <p className="text-sm leading-snug text-on-surface">{row.message}</p>
-                </div>
-              </div>
+            <div key={row.id} className="toast-sticker toast-info toast-pop" role="status">
+              <span className="toast-badge">
+                <Icon name="progress_activity" className="text-[15px] animate-spin" />
+              </span>
+              <p className="toast-text">{row.message}</p>
             </div>
           ))}
           {toasts.map((row) => {
@@ -140,30 +121,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             return (
               <div
                 key={row.id}
-                className="pointer-events-auto toast-in relative overflow-hidden rounded-xl border border-white/10 bg-surface-container-high shadow-2xl"
+                className={`toast-sticker ${look.tone} toast-pop`}
                 role={row.kind === "error" ? "alert" : "status"}
               >
-                <div className={`absolute inset-y-0 left-0 w-1 ${look.bar}`} />
-                <div className="flex items-start gap-3 py-3 pl-4 pr-2">
-                  <span
-                    className={`material-symbols-outlined filled mt-0.5 text-[22px] ${look.iconClass}`}
-                  >
-                    {look.icon}
-                  </span>
-                  <p className="min-w-0 flex-1 pt-0.5 text-sm leading-snug text-on-surface">
-                    {row.message}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => dismiss(row.id)}
-                    className="shrink-0 rounded-lg p-1 text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
-                    aria-label="Dismiss"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">
-                      close
-                    </span>
-                  </button>
-                </div>
+                <span className="toast-badge" aria-hidden="true">
+                  <Icon name={look.icon} className="text-[15px]" strokeWidth={3} />
+                </span>
+                <p className="toast-text">
+                  <span className="sr-only">{look.label}: </span>
+                  {row.message}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => dismiss(row.id)}
+                  className="toast-close"
+                  aria-label="Dismiss"
+                >
+                  <Icon name="close" className="text-[13px]" strokeWidth={2.5} />
+                </button>
+                <span
+                  className="toast-timer"
+                  style={{ animationDuration: `${DURATION[row.kind]}ms` }}
+                  aria-hidden="true"
+                />
               </div>
             );
           })}

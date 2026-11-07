@@ -6,6 +6,7 @@ import {
   youtubeVideoId,
   youtubeWatchUrl,
 } from "../lib/youtube";
+import Icon from "./Icon";
 
 type SongThumbProps = {
   youtubeUrl?: string | null;
@@ -81,14 +82,10 @@ export default function SongThumb({
               }}
             />
           ) : (
-            <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
-              <span
-                className={`material-symbols-outlined text-on-surface-variant ${
+            <div className="h-full w-full flex items-center justify-center bg-surface-container-high border border-white/10">
+              <Icon name="music_note" className={`text-on-surface-variant ${
                   size === "lg" ? "text-5xl" : "text-[20px]"
-                }`}
-              >
-                music_note
-              </span>
+                }`} />
             </div>
           )}
           {src && size === "lg" ? (
@@ -98,15 +95,11 @@ export default function SongThumb({
               className="absolute inset-0 flex items-center justify-center bg-black/25 hover:bg-black/35"
               aria-label={`Play ${title}`}
             >
-              <span className="material-symbols-outlined filled text-white text-5xl drop-shadow">
-                play_circle
-              </span>
+              <Icon name="play_circle" className="filled text-white text-5xl drop-shadow" />
             </button>
           ) : null}
           {src && size !== "lg" ? (
-            <span className="pointer-events-none absolute bottom-0.5 right-0.5 material-symbols-outlined filled text-white text-[12px] drop-shadow">
-              play_arrow
-            </span>
+            <Icon name="play_arrow" className="pointer-events-none absolute bottom-0.5 right-0.5 filled text-white text-[12px] drop-shadow" />
           ) : null}
         </>
       )}
@@ -121,7 +114,7 @@ export default function SongThumb({
           aria-label="Open in browser"
           className="absolute top-2 right-2 z-20 w-10 h-10 rounded-lg bg-black/65 text-white hover:bg-black/80 flex items-center justify-center"
         >
-          <span className="material-symbols-outlined text-[22px]">link</span>
+          <Icon name="link" className="text-[22px]" />
         </button>
       ) : null}
       <span className="sr-only">{title} thumbnail</span>

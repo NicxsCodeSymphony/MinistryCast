@@ -130,6 +130,10 @@ export async function signInWithEmailPassword(email: string, password: string) {
 }
 
 const PROFILE_CACHE_KEY = "mc_session_profile";
+const PROFILE_TTL_MS = 30_000;
+let profileMemo: { userId: string; profile: SessionProfile; at: number } | null = null;
+let profileInflight: { userId: string; promise: Promise<SessionProfile> } | null = null;
+let inflightToken: object | null = null;
 
 export function readCachedSessionProfile(): SessionProfile | null {
   try {
@@ -144,6 +148,8 @@ export const SESSION_PROFILE_EVENT = "mc:session-profile";
 
 export function cacheSessionProfile(profile: SessionProfile) {
   localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+  // Keep the in-memory copy in step with profile writes (updateMyChurch, …).
+  if (profileMemo) profileMemo = { ...profileMemo, profile, at: Date.now() };
   if (typeof window !== "undefined") {
     window.dispatchEvent(
       new CustomEvent(SESSION_PROFILE_EVENT, { detail: profile }),
@@ -153,6 +159,9 @@ export function cacheSessionProfile(profile: SessionProfile) {
 
 export function clearSessionProfileCache() {
   localStorage.removeItem(PROFILE_CACHE_KEY);
+  profileMemo = null;
+  profileInflight = null;
+  inflightToken = null;
 }
 
 /** Extract storage object path from a public bucket URL. */
@@ -212,24 +221,57 @@ export async function purgeUserStorage(userId: string) {
   ]);
 }
 
-export async function getSessionProfile(): Promise<SessionProfile> {
+/**
+ * Every page and route guard asks for the profile on mount. Share one request
+ * between concurrent callers and reuse the answer briefly so navigating does not
+ * re-fetch it each time. Keyed by the signed-in user, so switching accounts
+ * never sees the previous user's profile.
+ */
+
+export async function getSessionProfile(
+  options: { fresh?: boolean } = {},
+): Promise<SessionProfile> {
   const { data: sessionData } = await supabase.auth.getSession();
-  if (!sessionData.session) {
+  const userId = sessionData.session?.user.id;
+  if (!userId) {
     clearSessionProfileCache();
     return { authenticated: false, user: null, church: null };
   }
 
-  try {
-    const { data, error } = await supabase.rpc("get_session_profile");
-    if (error) throw asError(error, "Could not load your account.");
-    const profile = data as SessionProfile;
-    cacheSessionProfile(profile);
-    return profile;
-  } catch (err) {
-    const cached = readCachedSessionProfile();
-    if (cached?.authenticated && cached.user) return cached;
-    throw err;
+  // A request already on the wire is as fresh as a new one would be.
+  if (profileInflight?.userId === userId) return profileInflight.promise;
+  if (
+    !options.fresh &&
+    profileMemo?.userId === userId &&
+    Date.now() - profileMemo.at < PROFILE_TTL_MS
+  ) {
+    return profileMemo.profile;
   }
+
+  const token = {};
+  inflightToken = token;
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase.rpc("get_session_profile");
+      if (error) throw asError(error, "Could not load your account.");
+      const profile = data as SessionProfile;
+      profileMemo = { userId, profile, at: Date.now() };
+      cacheSessionProfile(profile);
+      return profile;
+    } catch (err) {
+      const cached = readCachedSessionProfile();
+      if (cached?.authenticated && cached.user) return cached;
+      throw err;
+    } finally {
+      if (inflightToken === token) {
+        inflightToken = null;
+        profileInflight = null;
+      }
+    }
+  })();
+  // Only register if it has not already settled (a synchronous failure clears the token).
+  if (inflightToken === token) profileInflight = { userId, promise };
+  return promise;
 }
 
 export async function completeSignup(
@@ -411,9 +453,9 @@ export function isLibraryEditor(profile: SessionProfile) {
   );
 }
 
-/** Create / edit / delete setlists and items (not operators). */
+/** Create / edit / delete setlists and items. Operators build setlists too. */
 export function canManageSetlists(profile: SessionProfile) {
-  return isLibraryEditor(profile);
+  return isLibraryEditor(profile) || isOperator(profile);
 }
 
 /** Operators / members: run services, not edit library or church profile. */

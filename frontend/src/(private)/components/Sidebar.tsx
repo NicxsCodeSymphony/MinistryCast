@@ -9,6 +9,7 @@ import {
 import { MinistryCastIcon } from "../../components/icons";
 import { usePrefs } from "../../lib/PrefsContext";
 import { useProfile } from "../../lib/ProfileContext";
+import Icon from "../../components/Icon";
 
 const SIDEBAR_COLLAPSED_KEY = "mc_sidebar_collapsed";
 
@@ -62,22 +63,18 @@ function NavItemLink({
       end={item.end}
       title={collapsed ? t(item.labelKey) : undefined}
       className={({ isActive }) =>
-        `flex items-center ${collapsed ? "justify-center px-2" : "gap-3 px-4"} py-3 rounded-lg ${
+        `flex items-center ${collapsed ? "justify-center px-2" : "gap-3 px-4"} py-2 rounded-lg text-[14px] transition-colors ${
           isActive
-            ? "border-l-4 border-primary bg-primary/10 text-on-surface font-semibold"
-            : "text-on-surface-variant hover:text-on-surface hover:bg-white/5 border-l-4 border-transparent"
+            ? "nav-item nav-item-active text-on-surface font-medium"
+            : "nav-item text-on-surface-variant hover:text-on-surface"
         }`
       }
     >
       {({ isActive }) => (
         <>
-          <span
-            className={`material-symbols-outlined ${isActive ? "filled" : ""}`}
-          >
-            {item.icon}
-          </span>
+          <Icon name={item.icon} className={`${isActive ? "filled" : ""}`} />
           {!collapsed ? (
-            <span className="text-[16px] leading-6">{t(item.labelKey)}</span>
+            <span className="leading-6">{t(item.labelKey)}</span>
           ) : null}
         </>
       )}
@@ -146,7 +143,7 @@ export default function Sidebar({
     <aside
       className={`${
         collapsed ? "w-[72px]" : "w-[260px]"
-      } h-screen fixed left-0 top-0 bg-surface-container/70 backdrop-blur-xl border-r border-white/10 flex flex-col py-6 z-50 transition-[width] duration-300 ease-out`}
+      } h-screen fixed left-0 top-0 app-chrome app-sidebar border-r flex flex-col py-6 z-50 transition-[width] duration-300 ease-out`}
     >
       <div
         className={`mb-6 flex items-center ${
@@ -159,7 +156,7 @@ export default function Sidebar({
           <MinistryCastIcon width={40} height={40} />
           {!collapsed ? (
             <div className="min-w-0">
-              <h1 className="text-[24px] leading-8 font-bold text-primary truncate">
+              <h1 className="text-[16px] leading-6 font-semibold tracking-tight text-on-surface truncate">
                 MinistryCast
               </h1>
               <p className="text-[10px] uppercase tracking-widest text-on-surface-variant opacity-60">
@@ -176,9 +173,7 @@ export default function Sidebar({
             title="Minimize sidebar"
             aria-label="Minimize sidebar"
           >
-            <span className="material-symbols-outlined text-[20px]">
-              left_panel_close
-            </span>
+            <Icon name="left_panel_close" className="text-[20px]" />
           </button>
         ) : null}
       </div>
@@ -192,14 +187,12 @@ export default function Sidebar({
             title="Expand sidebar"
             aria-label="Expand sidebar"
           >
-            <span className="material-symbols-outlined text-[20px]">
-              left_panel_open
-            </span>
+            <Icon name="left_panel_open" className="text-[20px]" />
           </button>
         </div>
       ) : null}
 
-      <nav className="flex-1 px-2 space-y-1 overflow-y-auto custom-scrollbar">
+      <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto custom-scrollbar">
         {items.map((item) => (
           <NavItemLink key={item.to} item={item} collapsed={collapsed} />
         ))}
@@ -217,11 +210,11 @@ export default function Sidebar({
           }}
           className={`w-full flex items-center ${
             collapsed ? "justify-center px-2" : "gap-3 px-4"
-          } py-3 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-white/5 border-l-4 border-transparent`}
+          } py-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-colors`}
         >
-          <span className="material-symbols-outlined">logout</span>
+          <Icon name="logout" />
           {!collapsed ? (
-            <span className="text-[16px] leading-6">{t("nav.signOut")}</span>
+            <span className="text-[14px] leading-6">{t("nav.signOut")}</span>
           ) : null}
         </button>
       </div>

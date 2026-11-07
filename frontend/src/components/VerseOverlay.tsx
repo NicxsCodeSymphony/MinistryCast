@@ -12,6 +12,8 @@ import {
   parseLyricTextStyle,
   type LyricTextStyle,
 } from "../lib/lyricTextStyle";
+import Icon from "./Icon";
+import { TextSkeleton } from "./Skeleton";
 
 const VERSE_PAGE_SIZE = 1;
 
@@ -327,7 +329,7 @@ export default function VerseOverlay({
           className="absolute top-4 right-4 z-10 w-11 h-11 rounded-full bg-black/10 text-black hover:bg-black/15"
           aria-label="Close verse"
         >
-          <span className="material-symbols-outlined text-[22px]">close</span>
+          <Icon name="close" className="text-[22px]" />
         </button>
       ) : null}
 
@@ -337,7 +339,7 @@ export default function VerseOverlay({
           className="h-full w-full min-w-0 overflow-hidden flex flex-col justify-center"
         >
           {busy ? (
-            <p className="text-center text-2xl opacity-50">Loading verse…</p>
+            <TextSkeleton lines={3} className="w-3/4 mx-auto opacity-60" />
           ) : error ? (
             <p className="text-[#b42318] text-center text-2xl">{error}</p>
           ) : (
@@ -370,7 +372,7 @@ export default function VerseOverlay({
                         style={{ color: "black" }}
                         title="Contract range from start"
                       >
-                        <span className="material-symbols-outlined text-[18px]">add</span>
+                        <Icon name="add" className="text-[18px]" />
                       </button>
                       <button
                         type="button"
@@ -380,7 +382,7 @@ export default function VerseOverlay({
                         style={{ color: "black" }}
                         title="Expand range backwards"
                       >
-                        <span className="material-symbols-outlined text-[18px]">remove</span>
+                        <Icon name="remove" className="text-[18px]" />
                       </button>
                     </div>
                   )}
@@ -407,7 +409,7 @@ export default function VerseOverlay({
                         style={{ color: "black" }}
                         title="Add next verse"
                       >
-                        <span className="material-symbols-outlined text-[18px]">add</span>
+                        <Icon name="add" className="text-[18px]" />
                       </button>
                       <button
                         type="button"
@@ -417,7 +419,7 @@ export default function VerseOverlay({
                         style={{ color: "black" }}
                         title="Remove last verse"
                       >
-                        <span className="material-symbols-outlined text-[18px]">remove</span>
+                        <Icon name="remove" className="text-[18px]" />
                       </button>
                     </div>
                   )}
@@ -509,9 +511,7 @@ export default function VerseOverlay({
                 className="flex items-center gap-1 rounded-full px-4 py-2 text-sm font-semibold disabled:pointer-events-none disabled:opacity-30 bg-black/10 text-black hover:bg-black/15"
                 aria-label="Previous verses"
               >
-                <span className="material-symbols-outlined text-[20px]">
-                  chevron_left
-                </span>
+                <Icon name="chevron_left" className="text-[20px]" />
                 Previous
               </button>
               <span className="min-w-[4.5rem] text-center text-sm font-bold tabular-nums tracking-wide text-black">
@@ -526,9 +526,7 @@ export default function VerseOverlay({
                 aria-label="Next verses"
               >
                 Next
-                <span className="material-symbols-outlined text-[20px]">
-                  chevron_right
-                </span>
+                <Icon name="chevron_right" className="text-[20px]" />
               </button>
             </div>
           ) : null}

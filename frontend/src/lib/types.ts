@@ -195,6 +195,8 @@ export type Setlist = {
   service_at: string | null;
   est_duration_seconds: number | null;
   archived_at?: string | null;
+  /** Default stage background when this setlist is presented (null = church default). */
+  stage_background?: string | null;
   created_at: string;
   updated_at: string;
   items?: SetlistItem[];

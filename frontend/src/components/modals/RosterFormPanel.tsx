@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { emptyRoster, type RosterPayload } from "../../lib/roster";
 import { newServiceItem, type ServiceItem } from "./serviceItem";
+import Icon from "../Icon";
 
 type RosterFormPanelProps = {
   setlistName: string;
@@ -72,24 +73,13 @@ export default function RosterFormPanel({
           className="text-on-surface-variant hover:text-primary transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 rounded-full p-1"
           aria-label="Close"
         >
-          <span className="material-symbols-outlined">close</span>
+          <Icon name="close" />
         </button>
       </div>
       <div className="p-6 space-y-5 max-h-[min(70vh,560px)] overflow-y-auto custom-scrollbar">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label className="space-y-1.5">
-            <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-widest">
-              Heading
-            </span>
-            <input
-              value={draft.heading}
-              onChange={(event) =>
-                setDraft((prev) => ({ ...prev, heading: event.target.value }))
-              }
-              className="w-full bg-surface-container border border-white/10 rounded-lg px-3 py-2.5 text-sm"
-              placeholder="Next Week"
-            />
-          </label>
+          {/* Date sits in the left column: the native calendar opens above the
+              field, and on the right it covered the dialog's close button. */}
           <label className="space-y-1.5">
             <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-widest">
               Date
@@ -101,6 +91,19 @@ export default function RosterFormPanel({
                 setDraft((prev) => ({ ...prev, date: event.target.value }))
               }
               className="w-full bg-surface-container border border-white/10 rounded-lg px-3 py-2.5 text-sm"
+            />
+          </label>
+          <label className="space-y-1.5">
+            <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-widest">
+              Heading
+            </span>
+            <input
+              value={draft.heading}
+              onChange={(event) =>
+                setDraft((prev) => ({ ...prev, heading: event.target.value }))
+              }
+              className="w-full bg-surface-container border border-white/10 rounded-lg px-3 py-2.5 text-sm"
+              placeholder="Next Week"
             />
           </label>
         </div>
@@ -148,7 +151,7 @@ export default function RosterFormPanel({
                 className="p-2 rounded-lg text-on-surface-variant hover:text-error disabled:opacity-30"
                 aria-label="Remove role"
               >
-                <span className="material-symbols-outlined text-[18px]">close</span>
+                <Icon name="close" className="text-[18px]" />
               </button>
             </div>
           ))}

@@ -12,6 +12,9 @@ import {
 } from "../../lib/auth";
 import { peekQuery } from "../../lib/offline/queryCache";
 import { useToast } from "../../lib/ToastContext";
+import Icon from "../../components/Icon";
+import { SearchField } from "../../components/ui";
+import { BentoCard, BentoGrid, Stat } from "../../components/bento";
 
 type ApprovalsPanelProps = {
   /** Compact layout for Settings tabs. */
@@ -118,15 +121,23 @@ export default function ApprovalsPanel({
     (row) => row.kind === "member" && row.phase === "platform",
   );
 
+  const platformMembers = memberPlatformPhase.length
+    ? memberPlatformPhase
+    : memberChurchPhase.filter((r) => r.phase === "platform");
+
   const showChurchAdminQueue =
     mode !== "platform" && churchAdmin && !superadmin;
   const showSuperadminQueue = mode !== "church" && superadmin;
 
   if (loading) {
     return embedded ? (
-      <div className="space-y-3">
-        <div className="h-6 w-40 rounded skeleton" />
-        <div className="h-24 rounded-xl skeleton" />
+      <div className="space-y-8">
+        <div className="space-y-2">
+          <div className="h-6 w-40 rounded skeleton" />
+          <div className="h-3.5 w-72 rounded skeleton" />
+        </div>
+        <div className="h-8 rounded-lg skeleton" />
+        <div className="h-28 rounded-[10px] skeleton" />
       </div>
     ) : (
       <PageSkeleton />
@@ -134,7 +145,7 @@ export default function ApprovalsPanel({
   }
 
   return (
-    <div className={embedded ? "space-y-5" : "space-y-6"}>
+    <div className={embedded ? "space-y-8" : "space-y-6"}>
       {!embedded ? (
         <header className="flex flex-col gap-2">
           <h2 className="text-[clamp(1.75rem,3vw,2rem)] font-semibold tracking-tight text-on-surface">
@@ -147,43 +158,59 @@ export default function ApprovalsPanel({
           </p>
         </header>
       ) : (
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-on-surface mb-1">
-              Approvals
-            </h2>
-            <p className="text-sm text-on-surface-variant">
-              {superadmin
-                ? "New churches and members. Approve sets status to active."
-                : "Join requests for your church. Approve sets status to active."}
-            </p>
+        <div className="space-y-6">
+          <div className="flex items-start gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-[20px] font-semibold tracking-tight text-on-surface">
+                Approvals
+              </h2>
+              <p className="mt-1 text-[13px] text-on-surface-variant">
+                {superadmin
+                  ? "New churches and members. Approve sets status to active."
+                  : "Join requests for your church. Approve sets status to active."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void load(true)}
+              className="ui-btn ui-btn-ghost shrink-0"
+            >
+              <Icon name="refresh" className="text-[15px]" />
+              Refresh
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => void load(true)}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:bg-white/5"
-          >
-            <span className="material-symbols-outlined text-[18px]">refresh</span>
-            Refresh
-          </button>
+          <SearchField
+            value={query}
+            onChange={setQuery}
+            placeholder="Search requests…"
+            className="w-full"
+          />
         </div>
       )}
 
-      {embedded ? (
-        <div className="relative">
-          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant">
-            search
-          </span>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search requests…"
-            className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-surface border border-outline-variant text-sm outline-none focus:ring-2 focus:ring-primary"
-          />
-        </div>
-      ) : null}
+      {error ? <p className="text-[13px] text-error">{error}</p> : null}
 
-      {error ? <p className="text-sm text-[#ffb4ab]">{error}</p> : null}
+      {showSuperadminQueue ? (
+        <BentoGrid className="auto-rows-auto">
+          <BentoCard span={4} aria-label="Churches waiting">
+            <Stat
+              label="Churches waiting"
+              value={churchPending.length}
+              hint={churchPending.length ? "Review and activate" : "All caught up"}
+            />
+          </BentoCard>
+          <BentoCard span={4} aria-label="Members waiting">
+            <Stat
+              label="Members waiting"
+              value={platformMembers.length}
+              hint={platformMembers.length ? "Approved by their church" : "All caught up"}
+            />
+          </BentoCard>
+          <BentoCard span={4} aria-label="Rejected churches">
+            <Stat label="Rejected churches" value={churchRejected.length} hint="Can be re-approved" />
+          </BentoCard>
+        </BentoGrid>
+      ) : null}
 
       {showChurchAdminQueue ? (
         <RequestPanel
@@ -209,11 +236,7 @@ export default function ApprovalsPanel({
           <RequestPanel
             title={`Members (${memberPlatformPhase.length || memberChurchPhase.filter((r) => r.phase === "platform").length})`}
             empty="No members waiting for activation."
-            rows={
-              memberPlatformPhase.length
-                ? memberPlatformPhase
-                : memberChurchPhase.filter((r) => r.phase === "platform")
-            }
+            rows={platformMembers}
             busyId={busyId}
             onReview={review}
             approveLabel="Approve & activate"
@@ -259,56 +282,59 @@ function RequestPanel({
   showReject?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-surface-container/40 p-4 sm:p-5">
-      <p className="text-primary text-[11px] font-semibold tracking-[0.05em] uppercase mb-4">
-        {title}
-      </p>
-      {rows.length === 0 ? (
-        <p className="text-on-surface-variant text-sm">{empty}</p>
-      ) : (
-        <ul className="space-y-3">
-          {rows.map((row) => (
-            <li
-              key={`${row.kind}-${row.id}`}
-              className="flex flex-col gap-3 sm:flex-row sm:items-center bg-white/5 p-3.5 rounded-xl border border-white/5"
-            >
-              <div className="flex-1 min-w-0">
-                <h4 className="font-semibold text-on-surface truncate">
-                  {row.kind === "church" ? row.church_name : row.applicant_name}
-                </h4>
-                <p className="text-on-surface-variant text-sm truncate">
-                  {row.kind === "church"
-                    ? `${row.applicant_name} · ${row.applicant_email}`
-                    : `${row.applicant_email} · ${row.church_name}`}
-                </p>
-                <p className="text-on-surface-variant/70 text-xs mt-1">
+    <section>
+      <h3 className="mb-2.5 text-[13px] font-semibold text-on-surface">{title}</h3>
+      <div className="card-surface rounded-xl border border-white/5 overflow-hidden">
+        {rows.length === 0 ? (
+          <p className="px-5 py-4 text-on-surface-variant text-[13px] flex items-center gap-2">
+            <Icon name="check_circle" className="text-[15px] text-outline" />
+            {empty}
+          </p>
+        ) : (
+          <ul>
+            {rows.map((row) => (
+              <li
+                key={`${row.kind}-${row.id}`}
+                className="flex flex-col gap-3 sm:flex-row sm:items-center px-5 py-3 border-t border-white/5 first:border-t-0 hover:bg-white/[0.03] transition-colors"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-medium text-on-surface truncate">
+                    {row.kind === "church" ? row.church_name : row.applicant_name}
+                  </p>
+                  <p className="text-on-surface-variant text-[12px] truncate">
+                    {row.kind === "church"
+                      ? `${row.applicant_name} · ${row.applicant_email}`
+                      : `${row.applicant_email} · ${row.church_name}`}
+                  </p>
+                </div>
+                <span className="text-[12px] text-outline tabular-nums shrink-0">
                   {new Date(row.created_at).toLocaleString()}
-                </p>
-              </div>
-              <div className="flex gap-2 shrink-0">
-                {showReject ? (
+                </span>
+                <div className="flex gap-2 shrink-0">
+                  {showReject ? (
+                    <button
+                      type="button"
+                      disabled={busyId === row.id}
+                      onClick={() => void onReview(row, "reject")}
+                      className="ui-btn ui-btn-ghost ui-btn-sm"
+                    >
+                      Reject
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     disabled={busyId === row.id}
-                    onClick={() => void onReview(row, "reject")}
-                    className="min-h-10 px-4 rounded-lg border border-white/10 text-sm text-on-surface-variant hover:bg-white/5 disabled:opacity-50"
+                    onClick={() => void onReview(row, "approve")}
+                    className="ui-btn ui-btn-primary ui-btn-sm"
                   >
-                    Reject
+                    {approveLabel}
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={busyId === row.id}
-                  onClick={() => void onReview(row, "approve")}
-                  className="min-h-10 px-4 rounded-lg bg-primary text-on-primary text-sm font-semibold disabled:opacity-50"
-                >
-                  {approveLabel}
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }

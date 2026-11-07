@@ -15,6 +15,7 @@ import {
   readSetlistViewChurchId,
   writeSetlistViewChurchId,
 } from "../lib/viewChurch";
+import { AppShellSkeleton, ConsoleSkeleton } from "../components/Skeleton";
 
 export default function RequireActive() {
   const { pathname } = useLocation();
@@ -101,8 +102,8 @@ export default function RequireActive() {
   if (redirect) return <Navigate to={redirect} replace />;
   if (!ready) {
     return (
-      <div className="min-h-full w-full bg-surface-container-lowest flex items-center justify-center">
-        <div className="w-10 h-10 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+      <div className="h-screen w-full">
+        {pathname.startsWith("/live") ? <ConsoleSkeleton /> : <AppShellSkeleton />}
       </div>
     );
   }

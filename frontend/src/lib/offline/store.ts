@@ -149,8 +149,77 @@ export async function setMeta(churchId: string, patch: Partial<ChurchMeta>) {
   return next;
 }
 
+/*
+ * In-memory read cache over IndexedDB collections.
+ *
+ * Pages hydrate rows one by one (each song reads categories, languages and
+ * every lyric section), so without this a 50-song page decoded the whole
+ * lyrics table ~50 times. Reads now share one in-flight read and then hit
+ * memory; writes go through to IndexedDB and update the cache.
+ *
+ * Cross-window safety: every write bumps a revision in localStorage (shared by
+ * all app windows, e.g. the projector). A window whose cached revision differs
+ * drops its cache before the next read, so it never serves stale rows. If
+ * localStorage is unavailable the cache is bypassed entirely.
+ */
+const STORE_REV_KEY = "mc.store.rev";
+const memo = new Map<string, Collection>();
+const memoReads = new Map<string, Promise<Collection>>();
+let memoRev: string | null = null;
+
+function readStoreRev(): string | null {
+  try {
+    return localStorage.getItem(STORE_REV_KEY) ?? "0";
+  } catch {
+    return null;
+  }
+}
+
+/** True when the cache may be used; clears it if another window wrote. */
+function memoUsable() {
+  const current = readStoreRev();
+  if (current === null) {
+    memo.clear();
+    memoReads.clear();
+    return false;
+  }
+  if (current !== memoRev) {
+    memo.clear();
+    memoReads.clear();
+    memoRev = current;
+  }
+  return true;
+}
+
+function bumpStoreRev() {
+  const next = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    localStorage.setItem(STORE_REV_KEY, next);
+    memoRev = next;
+  } catch {
+    memoRev = null;
+    memo.clear();
+  }
+}
+
 export async function getCollection(churchId: string, table: TableName) {
-  return (await idbGet<Collection>(colKey(churchId, table))) ?? {};
+  const key = colKey(churchId, table);
+  if (!memoUsable()) return (await idbGet<Collection>(key)) ?? {};
+  const hit = memo.get(key);
+  // Shallow copy: callers add/delete keys before writing back.
+  if (hit) return { ...hit };
+  let read = memoReads.get(key);
+  if (!read) {
+    const rev = memoRev;
+    read = idbGet<Collection>(key).then((value) => {
+      const collection = value ?? {};
+      if (memoRev === rev && memoReads.get(key) === read) memo.set(key, collection);
+      if (memoReads.get(key) === read) memoReads.delete(key);
+      return collection;
+    });
+    memoReads.set(key, read);
+  }
+  return { ...(await read) };
 }
 
 export async function setCollection(
@@ -158,7 +227,13 @@ export async function setCollection(
   table: TableName,
   collection: Collection,
 ) {
-  await idbSet(colKey(churchId, table), collection);
+  const key = colKey(churchId, table);
+  await idbSet(key, collection);
+  // Drop any read that started before this write, then publish the new state.
+  memoReads.delete(key);
+  memoUsable();
+  bumpStoreRev();
+  if (memoRev !== null) memo.set(key, { ...collection });
 }
 
 export async function listRows<T extends LocalRow>(

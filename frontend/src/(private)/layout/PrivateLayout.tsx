@@ -25,8 +25,19 @@ function LayoutBody() {
   const { setQuery } = useSearch();
   const { t } = usePrefs();
   const [collapsed, setCollapsed] = useState(readCollapsed);
+  // Narrow screens always get the icon rail (the saved preference is untouched).
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 900px)").matches : false,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)");
+    const onChange = () => setNarrow(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  const railOnly = collapsed || narrow;
   const liveMode = pathname.startsWith("/live");
-  const sidebarW = collapsed ? 72 : 260;
+  const sidebarW = railOnly ? 72 : 260;
 
   useEffect(() => {
     setQuery("");
@@ -38,12 +49,12 @@ function LayoutBody() {
     <div
       className={
         liveMode
-          ? "h-screen w-full bg-surface-container-lowest text-on-surface overflow-hidden"
-          : "flex min-h-full w-full bg-surface-container-lowest text-on-surface"
+          ? "h-screen w-full text-on-surface overflow-hidden"
+          : "flex min-h-full w-full text-on-surface"
       }
     >
       {!liveMode ? (
-        <Sidebar collapsed={collapsed} onCollapsedChange={setCollapsed} />
+        <Sidebar collapsed={railOnly} onCollapsedChange={setCollapsed} />
       ) : null}
 
       <div

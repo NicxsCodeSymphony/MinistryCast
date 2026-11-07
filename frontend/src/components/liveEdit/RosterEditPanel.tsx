@@ -5,6 +5,7 @@ import { updateSetlistItem } from "../../lib/api";
 import { formatRosterDate, normalizeRoster, type RosterPayload } from "../../lib/roster";
 import { stageUsesDarkText } from "../../lib/stageBackgrounds";
 import { DEFAULT_STAGE_FONT, stageFontFamily } from "../../lib/stageFonts";
+import Icon from "../Icon";
 
 const GOLD = "#e8c97a";
 
@@ -160,9 +161,7 @@ export default function RosterEditPanel({
                   className="absolute -right-[90px] top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus:opacity-100 w-[64px] h-[64px] rounded-full bg-black/50 text-white flex items-center justify-center"
                   aria-label={`Remove ${row.role || "role"}`}
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: 40 }}>
-                    close
-                  </span>
+                  <Icon name="close" style={{ fontSize: 40 }} />
                 </button>
               </div>
             ))}
@@ -188,7 +187,7 @@ export default function RosterEditPanel({
             onClick={addRole}
             className="inline-flex items-center gap-1 px-3 h-8 rounded-lg border border-white/10 hover:bg-white/5 text-[11px] font-semibold"
           >
-            <span className="material-symbols-outlined text-[16px]">person_add</span>
+            <Icon name="person_add" className="text-[16px]" />
             Add role
           </button>
           <p className="text-[11px] text-on-surface-variant">

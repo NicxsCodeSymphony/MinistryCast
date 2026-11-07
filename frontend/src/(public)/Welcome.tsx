@@ -53,6 +53,7 @@ const WelcomePage = () => {
     try {
       sessionStorage.setItem(AUTH_EMAIL_KEY, trimmed);
       await signInWithEmailPassword(trimmed, password);
+      // Profile cache is per user and cleared on sign-out, so this is already fresh.
       const profile = await getSessionProfile();
       navigate(nextPathForProfile(profile), { replace: true, state: { email: trimmed } });
     } catch (err) {

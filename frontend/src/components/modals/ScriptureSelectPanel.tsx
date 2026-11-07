@@ -24,6 +24,8 @@ import {
   serializeLyricTextStyle,
   type LyricTextStyle,
 } from "../../lib/lyricTextStyle";
+import Icon from "../Icon";
+import { Skeleton, TextSkeleton } from "../Skeleton";
 
 type ScriptureSelectPanelProps = {
   setlistName: string;
@@ -103,7 +105,7 @@ export default function ScriptureSelectPanel({
   }, [book, chapter, translation]);
 
   const verseText = (n: number) =>
-    verseMap.get(n) ?? (chapterBusy ? "Loading…" : "");
+    verseMap.get(n) ?? "";
 
   /** Follow the quick reference as it is typed: "John" → book, "John 3" → chapter, "John 3:16" → verses. */
   const pickedRef = useRef("");
@@ -235,10 +237,10 @@ export default function ScriptureSelectPanel({
       <button
         type="button"
         onClick={onClose}
-        className="absolute top-6 right-6 text-on-surface-variant hover:text-on-surface transition-colors z-20 bg-black/20 hover:bg-black/40 rounded-full p-2 backdrop-blur-md"
+        className="absolute top-6 right-6 text-on-surface-variant hover:text-on-surface transition-colors z-20 bg-black/20 hover:bg-black/40 rounded-full p-2 backdrop-blur-sm"
         aria-label="Close"
       >
-        <span className="material-symbols-outlined block">close</span>
+        <Icon name="close" className="block" />
       </button>
 
       <div className="p-6 md:p-8 h-full flex flex-col gap-6 overflow-y-auto custom-scrollbar min-h-0">
@@ -252,9 +254,7 @@ export default function ScriptureSelectPanel({
               >
                 {setlistName}
               </button>
-              <span className="material-symbols-outlined text-sm">
-                chevron_right
-              </span>
+              <Icon name="chevron_right" className="text-sm" />
               <span className="text-[12px] font-medium text-on-surface">
                 Add Item
               </span>
@@ -275,7 +275,7 @@ export default function ScriptureSelectPanel({
               type="button"
               onClick={addToSetlist}
               disabled={!selectedVerses.length || chapterBusy || Boolean(chapterError)}
-              className="bg-gradient-to-b from-primary to-primary-container text-on-primary text-sm font-medium px-6 py-2 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-40 shadow-[0_0_15px_rgba(155,203,255,0.3)]"
+              className="btn-primary text-sm font-medium px-6 py-2 rounded-lg transition-opacity disabled:opacity-40"
             >
               Add to Setlist
             </button>
@@ -284,16 +284,14 @@ export default function ScriptureSelectPanel({
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-[520px]">
           <div className="lg:col-span-7 flex flex-col gap-6 min-h-0">
-            <div className="glass-panel rounded-xl p-6 flex flex-col gap-6 shrink-0">
+            <div className="panel rounded-xl p-6 flex flex-col gap-6 shrink-0">
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1 flex flex-col gap-2">
                   <label className="text-[12px] font-medium text-on-surface-variant">
                     Quick Reference
                   </label>
                   <div className="relative soft-glow-focus rounded-lg">
-                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">
-                      search
-                    </span>
+                    <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" />
                     <input
                       value={quickRef}
                       onChange={(event) => setQuickRef(event.target.value)}
@@ -329,9 +327,7 @@ export default function ScriptureSelectPanel({
                         </option>
                       ))}
                     </select>
-                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none">
-                      expand_more
-                    </span>
+                    <Icon name="expand_more" className="absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none" />
                   </div>
                 </div>
               </div>
@@ -347,7 +343,7 @@ export default function ScriptureSelectPanel({
               )}
             </div>
 
-            <div className="glass-panel rounded-xl flex-1 flex flex-col overflow-hidden min-h-[360px]">
+            <div className="panel rounded-xl flex-1 flex flex-col overflow-hidden min-h-[360px]">
               <div className="grid grid-cols-3 border-b border-white/10">
                 {["BOOK", "CHAPTER"].map((label) => (
                   <div
@@ -372,9 +368,7 @@ export default function ScriptureSelectPanel({
                     }`}
                     title={allSelected ? "Clear selection" : "Select every verse in this chapter"}
                   >
-                    <span className="material-symbols-outlined text-[14px]">
-                      {allSelected ? "deselect" : "select_all"}
-                    </span>
+                    <Icon name={allSelected ? "deselect" : "select_all"} className="text-[14px]" />
                     {allSelected ? "Clear" : `All ${verses.length || ""}`.trim()}
                   </button>
                 </div>
@@ -444,10 +438,8 @@ export default function ScriptureSelectPanel({
                 </div>
                 <div ref={verseListRef} className="overflow-y-auto p-2 custom-scrollbar">
                   {chapterBusy && !verses.length ? (
-                    <div className="p-3 flex items-start gap-2 text-sm text-on-surface-variant">
-                      <span className="material-symbols-outlined text-[18px] animate-spin shrink-0">
-                        progress_activity
-                      </span>
+                    <div className="p-3 text-sm text-on-surface-variant space-y-3">
+                      <TextSkeleton lines={4} />
                       <div>
                         <p>
                           Loading {book} {chapter} (
@@ -482,9 +474,7 @@ export default function ScriptureSelectPanel({
                               }`}
                             >
                               {checked ? (
-                                <span className="material-symbols-outlined text-[12px] text-on-primary font-bold absolute pointer-events-none">
-                                  check
-                                </span>
+                                <Icon name="check" className="text-[12px] text-on-primary font-bold absolute pointer-events-none" />
                               ) : null}
                               <input
                                 checked={checked}
@@ -508,7 +498,9 @@ export default function ScriptureSelectPanel({
                                     : "text-on-surface-variant line-clamp-2"
                                 }`}
                               >
-                                {text}
+                                {text || (chapterBusy ? (
+                                  <Skeleton className="inline-block align-middle h-3 w-48" />
+                                ) : null)}
                               </span>
                             </div>
                           </label>
@@ -522,7 +514,7 @@ export default function ScriptureSelectPanel({
           </div>
 
           <div className="lg:col-span-5 flex flex-col gap-6 min-h-0">
-            <div className="glass-panel rounded-xl p-1 flex items-center justify-between bg-surface-container/50 shrink-0">
+            <div className="panel rounded-xl p-1 flex items-center justify-between bg-surface-container/50 shrink-0">
               <div className="flex gap-1">
                 <button
                   type="button"
@@ -559,9 +551,7 @@ export default function ScriptureSelectPanel({
 
             <div className="flex-1 bg-black rounded-xl border border-white/10 relative overflow-hidden shadow-2xl flex flex-col justify-end min-h-[220px] aspect-video lg:aspect-auto">
               <div className="absolute inset-0 bg-surface-container-lowest/80 flex items-center justify-center">
-                <span className="material-symbols-outlined text-outline-variant/30 text-6xl">
-                  videocam
-                </span>
+                <Icon name="videocam" className="text-outline-variant/30 text-6xl" />
               </div>
               <div
                 className="relative z-10 w-full p-8 bg-gradient-to-t from-black/90 via-black/60 to-transparent"
@@ -623,7 +613,7 @@ export default function ScriptureSelectPanel({
               </div>
             </div>
 
-            <div className="glass-panel rounded-xl p-4 flex flex-wrap gap-4 justify-between items-center shrink-0">
+            <div className="panel rounded-xl p-4 flex flex-wrap gap-4 justify-between items-center shrink-0">
               <div className="flex items-center gap-4 text-on-surface-variant">
                 <select
                   value={font}
@@ -641,7 +631,7 @@ export default function ScriptureSelectPanel({
                 <TextStylePicker value={textStyle} onChange={setTextStyle} />
 
                 <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-lg">palette</span>
+                  <Icon name="palette" className="text-lg" />
                   <input
                     type="color"
                     value={color}

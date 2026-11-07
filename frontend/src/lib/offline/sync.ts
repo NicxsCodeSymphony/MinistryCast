@@ -48,19 +48,50 @@ async function schedule(churchId: string, minMs = 5_000) {
   }, wait);
 }
 
-async function doSync(churchId: string) {
+const TABLE_NOUN: Record<string, string> = {
+  setlists: "setlist",
+  setlist_items: "setlist item",
+  setlist_shares: "setlist share",
+  songs: "song",
+  song_lyric_sections: "song lyrics",
+  sermons: "sermon",
+  sermon_slides: "sermon slide",
+  church_settings: "church setting",
+  output_displays: "display setting",
+};
+
+function rejectedMessage(tables: string[]) {
+  const kinds = [...new Set(tables.map((table) => TABLE_NOUN[table] ?? table.replace(/_/g, " ")))];
+  const n = tables.length;
+  return `${n} ${n === 1 ? "change" : "changes"} to ${kinds.join(", ")} ${
+    n === 1 ? "was" : "were"
+  } not backed up because your role can't edit ${n === 1 && kinds.length === 1 ? "it" : "them"}. The server copy was restored.`;
+}
+
+/** A full pull this recent is reused instead of downloading every table again. */
+const FRESH_PULL_MS = 120_000;
+
+function isFreshPull(hydratedAt: string | null | undefined) {
+  const at = hydratedAt ? Date.parse(hydratedAt) : 0;
+  return Number.isFinite(at) && at > 0 && Date.now() - at < FRESH_PULL_MS;
+}
+
+async function doSync(churchId: string, options: { reusePull?: boolean } = {}) {
   setSyncSnapshot({ syncing: true, online: true, error: null });
   try {
-    await pushOutbox(churchId);
-    await pullRemote(churchId);
+    const { rejected } = await pushOutbox(churchId);
+    const before = await getMeta(churchId);
+    // App open hydrates first; don't pull the whole catalog twice in a row.
+    const pulled = !(options.reusePull && isFreshPull(before.hydratedAt));
+    if (pulled) await pullRemote(churchId);
     const meta = await setMeta(churchId, {
       lastSyncAt: nowIso(),
-      hydratedAt: nowIso(),
+      ...(pulled ? { hydratedAt: nowIso() } : {}),
     });
     await refreshPending(churchId);
     setSyncSnapshot({
       syncing: false,
-      error: null,
+      error: rejected.length ? rejectedMessage(rejected.map((r) => r.table)) : null,
       lastSyncAt: meta.lastSyncAt,
       frequency: meta.backupFrequency,
     });
@@ -77,7 +108,10 @@ async function doSync(churchId: string) {
   }
 }
 
-async function runSync(churchId: string, reason: "manual" | "schedule" | "online") {
+async function runSync(
+  churchId: string,
+  reason: "manual" | "schedule" | "online" | "startup",
+) {
   if (reason !== "manual" && inflight) return;
   while (inflight) {
     try {
@@ -95,7 +129,8 @@ async function runSync(churchId: string, reason: "manual" | "schedule" | "online
     await schedule(churchId);
     return;
   }
-  const job = doSync(churchId);
+  // App open just hydrated (pulled) the catalog; only push on top of it.
+  const job = doSync(churchId, { reusePull: reason === "startup" });
   inflight = job;
   try {
     await job;
@@ -190,7 +225,7 @@ export async function startSyncEngine(churchId: string) {
   // church setlists, songs, and sermons immediately, then keep reading from IDB.
   if (isOnline()) {
     try {
-      await runSync(churchId, "online");
+      await runSync(churchId, "startup");
     } catch {
       /* hydrate already populated what it could; schedule will retry */
     }

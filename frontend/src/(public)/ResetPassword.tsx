@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MinistryCastIcon, UpArrowIcon } from "../components/icons";
+import Icon from "../components/Icon";
+import { AuthCard, AuthError, AuthField, AuthFootnote, AuthHeading, AuthSubmit } from "./authUi";
 import { updatePassword } from "../lib/auth";
 import { supabase } from "../lib/supabase";
 import AuthFrame from "./AuthFrame";
@@ -54,64 +55,56 @@ export default function ResetPassword() {
 
   return (
     <AuthFrame step={1}>
-      <MinistryCastIcon />
-      <h2 className="text-[clamp(1.75rem,4vw,3rem)] mt-8 text-[#E2E8F0] max-w-[479px] font-bold leading-tight">
-        Choose a new password
-      </h2>
-      <p className="mt-4 text-white/60 max-w-[425px]">
+      <AuthHeading eyebrow="Account recovery" title="Choose a new password">
         {ready
           ? "Enter a new password for this account."
           : "Open the reset link from your email to continue."}
-      </p>
+      </AuthHeading>
 
-      <form
-        className="mt-8 w-full max-w-md rounded-[8px] border border-white/10 bg-white/[0.03] p-5 sm:p-8"
-        onSubmit={(event) => void handleSubmit(event)}
-      >
+      <AuthCard onSubmit={(event) => void handleSubmit(event)}>
         {ready ? (
           <>
-            <input
-              className="w-full min-h-[57px] bg-white/5 border border-white/10 rounded-[8px] px-4 text-[#E2E8F0] placeholder:text-white/20 outline-none"
+            <AuthField
+              label="New password"
               placeholder="New password"
               type="password"
+              name="password"
               autoComplete="new-password"
               data-testid="reset-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
-            <input
-              className="mt-3 w-full min-h-[57px] bg-white/5 border border-white/10 rounded-[8px] px-4 text-[#E2E8F0] placeholder:text-white/20 outline-none"
+            <AuthField
+              className="mt-4"
+              label="Confirm password"
               placeholder="Confirm password"
               type="password"
+              name="confirm"
               autoComplete="new-password"
               data-testid="reset-confirm"
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
             />
-            {error ? (
-              <p className="mt-3 text-sm text-[#ffb4ab]">{error}</p>
-            ) : null}
-            <button
-              type="submit"
-              disabled={working}
-              data-testid="reset-submit"
-              className="mt-4 w-full min-h-[56px] bg-indigo-600 rounded-[8px] flex items-center justify-center gap-2 disabled:opacity-60"
-            >
-              <UpArrowIcon />
-              <span className="text-white font-semibold">
+            <AuthError>{error}</AuthError>
+            <div className="mt-3">
+              <AuthSubmit disabled={working} testId="reset-submit" icon="check">
                 {working ? "Saving…" : "Save password"}
-              </span>
-            </button>
+              </AuthSubmit>
+            </div>
           </>
         ) : (
-          <p className="text-sm text-white/60">Waiting for the reset link…</p>
+          <p className="flex items-center gap-2 text-[14px] text-on-surface-variant">
+            <Icon name="progress_activity" className="text-[15px] animate-spin" />
+            Waiting for the reset link…
+          </p>
         )}
-        <p className="mt-5 text-sm text-white/50">
-          <Link className="text-[#818CF8] hover:underline" to="/">
+        <AuthFootnote>
+          <Link className="text-primary hover:underline inline-flex items-center gap-1" to="/">
+            <Icon name="arrow_back" className="text-[14px]" />
             Back to sign in
           </Link>
-        </p>
-      </form>
+        </AuthFootnote>
+      </AuthCard>
     </AuthFrame>
   );
 }

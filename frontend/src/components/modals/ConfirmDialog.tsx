@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Modal from "./Modal";
+import Icon from "../Icon";
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -66,7 +67,7 @@ export default function ConfirmDialog({
         <div className="relative mb-6">
           <div className="absolute inset-0 bg-error/20 rounded-full blur-xl animate-pulse" />
           <div className="relative w-16 h-16 rounded-full bg-error-container flex items-center justify-center text-error border border-error/30">
-            <span className="material-symbols-outlined text-4xl">warning</span>
+            <Icon name="warning" className="text-4xl" />
           </div>
         </div>
 

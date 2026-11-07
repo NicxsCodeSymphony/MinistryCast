@@ -31,7 +31,7 @@ import { sermonPlainText } from "./sermonMarkup";
 import { asStageBackground } from "./stageBackgrounds";
 import { PAGE_SIZE } from "./types";
 import { categoryTone, presetForCategoryName } from "./categoryColor";
-import { getSessionProfile, isSuperadmin, readCachedSessionProfile } from "./auth";
+import { canManageSetlists, getSessionProfile, isSuperadmin, readCachedSessionProfile } from "./auth";
 import { recordAuditEvent } from "./admin";
 import type {
   BibleVersion,
@@ -486,8 +486,20 @@ async function replaceLyricSections(
   await replaceChildren(churchId, "song_lyric_sections", "song_id", songId, rows);
 }
 
+/** Case- and spacing-insensitive key used to detect duplicate song titles. */
+function songTitleKey(title: string) {
+  return title.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
 export async function createSong(input: SongInput) {
   const churchId = await ready();
+  const key = songTitleKey(input.title);
+  if (!key) throw asError(null, "Song title is required.");
+  const existing = await listRows<Song>(churchId, "songs");
+  const duplicate = existing.find((song) => songTitleKey(song.title ?? "") === key);
+  if (duplicate) {
+    throw asError(null, `A song titled “${duplicate.title}” already exists.`);
+  }
   const now = stamp();
   const row: Song = {
     id: newId(),
@@ -615,7 +627,9 @@ export async function listSermons(
     admin,
   );
   const nowMs = Date.now();
-  for (const row of sermons) {
+  // Rows come from the shared store cache: replace, never mutate in place.
+  sermons = [...sermons];
+  for (const [index, row] of sermons.entries()) {
     if (row.archived_at || !row.service_date) continue;
     const dayEnd = new Date(`${row.service_date}T23:59:59`);
     if (!Number.isFinite(dayEnd.getTime()) || dayEnd.getTime() >= nowMs) continue;
@@ -627,9 +641,7 @@ export async function listSermons(
       updated_at: stamped,
     };
     await putRow(churchId, "sermons", next as LocalRow);
-    row.archived_at = stamped;
-    row.updated_at = stamped;
-    row.status = "archived";
+    sermons[index] = next as typeof row;
   }
   sermons = sermons.filter((row) =>
     archived ? Boolean(row.archived_at) : !row.archived_at,
@@ -1245,8 +1257,13 @@ export async function listSetlists(
     admin,
   );
   // Past service dates auto-archive into the Archive tab (after that calendar day).
+  // Only setlist editors persist that; for operators it is a view-only flag, since
+  // the server rejects their setlist writes and the change would block backups.
+  const persistArchive = Boolean(profile && canManageSetlists(profile));
   const nowMs = Date.now();
-  for (const row of rows) {
+  // Rows come from the shared store cache: replace, never mutate in place.
+  rows = [...rows];
+  for (const [index, row] of rows.entries()) {
     if (row.archived_at || !row.service_at) continue;
     const serviceDayEnd = new Date(row.service_at);
     serviceDayEnd.setHours(23, 59, 59, 999);
@@ -1262,9 +1279,8 @@ export async function listSetlists(
       archived_at: stamped,
       updated_at: stamped,
     };
-    await putRow(churchId, "setlists", next as LocalRow);
-    row.archived_at = stamped;
-    row.updated_at = stamped;
+    if (persistArchive) await putRow(churchId, "setlists", next as LocalRow);
+    rows[index] = next;
   }
   rows = rows.filter((row) =>
     archived ? Boolean(row.archived_at) : !row.archived_at,
@@ -1366,6 +1382,84 @@ export async function updateSetlist(id: string, input: SetlistInput) {
     await replaceSetlistShares(churchId, id, requested, homeId, row.name);
   }
   return getSetlist(id);
+}
+
+/** Set (or clear with null) the stage background a setlist presents with. */
+export async function updateSetlistBackground(id: string, background: string | null) {
+  const churchId = await ready();
+  const existing = await getRow<Setlist>(churchId, "setlists", id);
+  if (!existing) throw asError(null, "Could not update setlist.");
+  const row: Setlist = {
+    ...existing,
+    stage_background: background ? asStageBackground(background) : null,
+    updated_at: stamp(),
+  };
+  await putRow(churchId, "setlists", row as LocalRow);
+  invalidateQueryPrefix(`getSetlist:${churchId}:${id}`);
+  invalidateQueryPrefix(`listSetlists:${churchId}:`);
+  return getSetlist(id);
+}
+
+/* ── Custom stage background images ──────────────────────────────────── */
+
+export const BACKGROUND_MEDIA_KIND = "background";
+const BACKGROUND_MAX_EDGE = 1920;
+
+/**
+ * Downscale an uploaded image to a 1080p-class JPEG data URL. Stored inline in
+ * media_assets.url so backgrounds work offline and in the projector window
+ * (shared IndexedDB), and sync through the normal outbox.
+ */
+export async function imageFileToBackgroundDataUrl(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file.");
+  if (file.size > 25 * 1024 * 1024) throw new Error("Image is larger than 25 MB.");
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, BACKGROUND_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not process that image.");
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close?.();
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+export async function uploadBackgroundImage(file: File) {
+  const url = await imageFileToBackgroundDataUrl(file);
+  const name = file.name.replace(/\.[^.]+$/, "").slice(0, 120) || "Background";
+  const asset = await createMediaAsset({
+    name,
+    url,
+    kind: BACKGROUND_MEDIA_KIND,
+    mimeType: "image/jpeg",
+  });
+  invalidateQueryPrefix(`listMedia:`);
+  return asset;
+}
+
+export async function listBackgroundImages() {
+  const churchId = await ready();
+  const rows = await listRows<MediaAsset>(churchId, "media_assets");
+  return rows
+    .filter((row) => row.kind === BACKGROUND_MEDIA_KIND)
+    .sort((a, b) =>
+      String((b as LocalRow).created_at ?? "").localeCompare(String((a as LocalRow).created_at ?? "")),
+    );
+}
+
+export async function getBackgroundImageUrl(assetId: string) {
+  const churchId = await ready();
+  const row = await getRow<MediaAsset>(churchId, "media_assets", assetId);
+  return row?.url ?? null;
+}
+
+export async function deleteBackgroundImage(assetId: string) {
+  const churchId = await ready();
+  await removeRow(churchId, "media_assets", assetId);
+  invalidateQueryPrefix(`listMedia:`);
 }
 
 export async function deleteSetlist(id: string) {

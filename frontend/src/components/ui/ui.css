@@ -1,0 +1,300 @@
+/* MinistryCast UI kit styles. Tokens come from App.css (--mc-*). */
+
+@layer components {
+  /* Buttons */
+  .ui-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+  .ui-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .ui-btn:focus-visible,
+  .ui-icon-btn:focus-visible,
+  .ui-tab:focus-visible,
+  .ui-chip:focus-visible,
+  .ui-menu-item:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--mc-primary) 70%, transparent);
+    outline-offset: 1px;
+  }
+  .ui-btn-sm {
+    height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .ui-btn-primary {
+    background: var(--mc-button);
+    color: var(--mc-on-button);
+  }
+  .ui-btn-primary:hover:not(:disabled) {
+    background: var(--mc-button-hover);
+  }
+  .ui-btn-secondary {
+    background: var(--mc-surface-container);
+    border-color: var(--mc-hairline-strong);
+    color: var(--mc-on-surface);
+  }
+  .ui-btn-secondary:hover:not(:disabled) {
+    background: var(--mc-surface-container-high);
+  }
+  .ui-btn-ghost {
+    color: var(--mc-on-surface-variant);
+  }
+  .ui-btn-ghost:hover:not(:disabled) {
+    color: var(--mc-on-surface);
+    background: var(--mc-surface-container-high);
+  }
+  .ui-btn-danger {
+    background: color-mix(in oklab, var(--mc-error) 14%, transparent);
+    border-color: color-mix(in oklab, var(--mc-error) 30%, transparent);
+    color: var(--mc-error);
+  }
+  .ui-btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--mc-error) 22%, transparent);
+  }
+
+  .ui-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: var(--mc-on-surface-variant);
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+  .ui-icon-btn:hover:not(:disabled) {
+    background: var(--mc-surface-container-high);
+    color: var(--mc-on-surface);
+  }
+  .ui-icon-btn:disabled {
+    opacity: 0.4;
+  }
+  .ui-icon-btn-danger:hover:not(:disabled) {
+    color: var(--mc-error);
+  }
+
+  /* Tabs */
+  .ui-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--mc-surface-container);
+    border: 1px solid var(--mc-hairline);
+  }
+  .ui-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--mc-on-surface-variant);
+  }
+  .ui-tab:hover {
+    color: var(--mc-on-surface);
+  }
+  .ui-tab[aria-selected="true"] {
+    background: var(--mc-surface-container-highest);
+    color: var(--mc-on-surface);
+  }
+  .ui-tab-count {
+    font-size: 11px;
+    color: var(--mc-outline);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Search + chips */
+  .ui-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 8px;
+    background: var(--mc-surface-container);
+    border: 1px solid var(--mc-hairline);
+    min-width: 220px;
+  }
+  .ui-search:focus-within {
+    border-color: color-mix(in oklab, var(--mc-primary) 55%, transparent);
+  }
+  .ui-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--mc-on-surface-variant);
+    border: 1px dashed var(--mc-hairline-strong);
+  }
+  .ui-chip:hover {
+    color: var(--mc-on-surface);
+  }
+  .ui-chip-active {
+    border-style: solid;
+    border-color: color-mix(in oklab, var(--mc-primary) 50%, transparent);
+    background: color-mix(in oklab, var(--mc-primary) 12%, transparent);
+    color: var(--mc-on-surface);
+  }
+
+  /* Lists */
+  .ui-group-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 24px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--mc-on-surface-variant);
+    background: var(--mc-surface-container-low);
+    border-bottom: 1px solid var(--mc-hairline);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .ui-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 16px 0 24px;
+    border-bottom: 1px solid var(--mc-hairline);
+    transition: background-color 80ms ease;
+  }
+  .ui-row:hover {
+    background: var(--mc-surface-container);
+  }
+  .ui-row-selected,
+  .ui-row-selected:hover {
+    background: color-mix(in oklab, var(--mc-primary) 10%, transparent);
+    box-shadow: inset 2px 0 0 var(--mc-primary);
+  }
+
+  /* Menus */
+  .ui-menu {
+    position: absolute;
+    z-index: 60;
+    min-width: 180px;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--mc-surface-container-highest);
+    box-shadow: var(--mc-popover-shadow);
+  }
+  .ui-menu-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--mc-on-surface);
+    text-align: left;
+  }
+  .ui-menu-item:hover:not(:disabled) {
+    background: var(--mc-surface-bright);
+  }
+  .ui-menu-item:disabled {
+    opacity: 0.45;
+  }
+  .ui-menu-item-danger {
+    color: var(--mc-error);
+  }
+
+  /* Badges, kbd, labels */
+  .ui-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 20px;
+    padding: 0 7px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--mc-hairline-strong);
+    color: var(--mc-on-surface-variant);
+    white-space: nowrap;
+  }
+  .ui-badge-accent {
+    color: var(--mc-primary);
+    border-color: color-mix(in oklab, var(--mc-primary) 35%, transparent);
+  }
+  .ui-badge-success {
+    color: #4cc38a;
+    border-color: rgba(76, 195, 138, 0.35);
+  }
+  .ui-badge-warning {
+    color: var(--mc-tertiary);
+    border-color: color-mix(in oklab, var(--mc-tertiary) 35%, transparent);
+  }
+  .ui-badge-danger {
+    color: var(--mc-error);
+    border-color: color-mix(in oklab, var(--mc-error) 35%, transparent);
+  }
+  .ui-kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--mc-on-surface-variant);
+    background: var(--mc-surface-container-high);
+    border: 1px solid var(--mc-hairline-strong);
+  }
+  .ui-btn-primary .ui-kbd {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .ui-section-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--mc-on-surface-variant);
+    margin-bottom: 8px;
+  }
+  .ui-input {
+    width: 100%;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--mc-on-surface);
+    background: var(--mc-surface-container);
+    border: 1px solid var(--mc-hairline-strong);
+    outline: none;
+  }
+  .ui-input:focus {
+    border-color: color-mix(in oklab, var(--mc-primary) 60%, transparent);
+  }
+}

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import Icon from "../../../components/Icon";
 
 export function statusTone(status: string) {
   if (status === "active") return "bg-primary/15 text-primary border-primary/30";
@@ -38,7 +39,7 @@ export function AdminBackLink({
       to={to}
       className="inline-flex items-center gap-1.5 text-sm text-on-surface-variant hover:text-on-surface mb-3"
     >
-      <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+      <Icon name="arrow_back" className="text-[18px]" />
       {label}
     </Link>
   );

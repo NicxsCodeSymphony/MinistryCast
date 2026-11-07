@@ -5,9 +5,8 @@ import ConfirmDialog from "../../components/modals/ConfirmDialog";
 import SetlistFormModal, {
   type SetlistFormValues,
 } from "../../components/modals/SetlistFormModal";
-import type { ServiceItem } from "../../components/modals/serviceItem";
-import { PageSkeleton } from "../../components/Skeleton";
-import SongThumb from "../../components/SongThumb";
+import type { ServiceItem, ServiceItemKind } from "../../components/modals/serviceItem";
+import { Skeleton } from "../../components/Skeleton";
 import {
   addSetlistItem,
   createSetlist,
@@ -24,14 +23,14 @@ import {
   type ChurchName,
 } from "../../lib/api";
 import { getSessionProfile, isSuperadmin, canManageSetlists } from "../../lib/auth";
-import { formatDuration, moveItem, parseDurationSeconds, requireChurchId } from "../../lib/helpers";
+import { formatDuration, localDateInput, moveItem, parseDurationSeconds, requireChurchId } from "../../lib/helpers";
 import { useHoldReorder } from "../../lib/holdDrag";
 import { useSearch } from "../../lib/SearchContext";
 import { usePrefs } from "../../lib/PrefsContext";
 import { useToast } from "../../lib/ToastContext";
 import { LoadMoreBar } from "../../components/LoadMoreBar";
 import { reloadChurchCatalog } from "../../lib/offline/sync";
-import { PAGE_SIZE, type Setlist, type Song } from "../../lib/types";
+import { PAGE_SIZE, type Setlist, type SetlistItem, type Song } from "../../lib/types";
 import {
   readSetlistViewChurchId,
   writeSetlistViewChurchId,
@@ -40,14 +39,40 @@ import {
   readPreferredSetlistId,
   writePreferredSetlistId,
 } from "../../lib/preferredSetlist";
+import Icon from "../../components/Icon";
+import SetlistBackgroundControl from "../../components/SetlistBackgroundControl";
+import {
+  Button,
+  EmptyState,
+  IconButton,
+  PageHeader,
+  RowMenu,
+  ViewTabs,
+  type MenuItem,
+} from "../../components/ui";
+import DateBlock from "../../components/setlists/DateBlock";
+import LibraryTable from "../../components/LibraryTable";
+import RunOfShow from "../../components/setlists/RunOfShow";
+import {
+  SetlistDetailSkeleton,
+  SetlistIndexSkeleton,
+  SetlistRowsSkeleton,
+  RunOfShowSkeleton,
+} from "../../components/setlists/Skeletons";
+import AddToSetlistPanel from "../../components/setlists/AddToSetlistPanel";
+import { SetlistInsights } from "../../components/library/LibraryInsights";
+import {
+  groupSetlists,
+  itemsDuration,
+  serviceDate,
+  serviceTime,
+} from "../../components/setlists/grouping";
 
-const accentIcon: Record<string, string> = {
-  song: "bg-primary/10 text-primary",
-  sermon: "bg-tertiary/10 text-tertiary",
-  scripture: "bg-secondary/10 text-secondary",
-  media: "bg-tertiary/10 text-tertiary",
-  roster: "bg-secondary/10 text-secondary",
-};
+type RowStats = { count: number; seconds: number };
+
+function statsOf(setlist: Setlist): RowStats {
+  return { count: setlist.items?.length ?? 0, seconds: itemsDuration(setlist.items) };
+}
 
 export default function Setlists() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -59,9 +84,12 @@ export default function Setlists() {
   const [quickSongs, setQuickSongs] = useState<Song[]>([]);
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
+  /** Setlist being edited (from the index row menu or the open setlist). */
+  const [formTarget, setFormTarget] = useState<Setlist | null>(null);
   const [addItemOpen, setAddItemOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [addItemStep, setAddItemStep] = useState<ServiceItemKind | undefined>();
+  /** Setlist pending deletion; non-null opens the confirm dialog. */
+  const [deleteTarget, setDeleteTarget] = useState<Setlist | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [total, setTotal] = useState(0);
@@ -74,6 +102,8 @@ export default function Setlists() {
   showArchiveRef.current = showArchive;
   const [canManage, setCanManage] = useState(false);
   const [preferredId, setPreferredId] = useState(readPreferredSetlistId);
+  const [rowStats, setRowStats] = useState<Record<string, RowStats>>({});
+
   const openSetlist = async (id: string, replace = false) => {
     const next = await getSetlist(id);
     setActive(next);
@@ -84,6 +114,12 @@ export default function Setlists() {
     writePreferredSetlistId(id);
     setPreferredId(id);
     toast.success(t("setlists.preferredSet"));
+  };
+
+  const reportError = (err: unknown, fallback: string) => {
+    const message = err instanceof Error ? err.message : fallback;
+    setError(message);
+    toast.error(message);
   };
 
   const loadList = async (
@@ -137,6 +173,17 @@ export default function Setlists() {
     }
   };
 
+  /** Refresh the index in place (no auto-open of a setlist). */
+  const reloadIndex = (archived = showArchiveRef.current) =>
+    loadList(undefined, viewChurchId, superadmin, 0, false, archived, {
+      autoOpen: false,
+    });
+
+  const backToIndex = () => {
+    setActive(null);
+    setSearchParams({}, { replace: true });
+  };
+
   const switchSetlistTab = (archived: boolean) => {
     if (archived === showArchive) return;
     setShowArchive(archived);
@@ -147,12 +194,7 @@ export default function Setlists() {
     void loadList(undefined, viewChurchId, superadmin, 0, false, archived, {
       autoOpen: false,
     })
-      .catch((err) => {
-        const message =
-          err instanceof Error ? err.message : t("setlists.loadError");
-        setError(message);
-        toast.error(message);
-      })
+      .catch((err) => reportError(err, t("setlists.loadError")))
       .finally(() => setLoading(false));
   };
 
@@ -239,9 +281,36 @@ export default function Setlists() {
     };
   }, [searchParams, loading, active?.id]);
 
+  // Item count + running time for each index row (local reads, cached).
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(
+      setlists.map((row) =>
+        getSetlist(row.id)
+          .then((full) => [row.id, statsOf(full)] as const)
+          .catch(() => null),
+      ),
+    ).then((entries) => {
+      if (cancelled) return;
+      setRowStats((prev) => {
+        const next = { ...prev };
+        for (const entry of entries) if (entry) next[entry[0]] = entry[1];
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [setlists]);
+
+  useEffect(() => {
+    if (!active?.items) return;
+    setRowStats((prev) => ({ ...prev, [active.id]: statsOf(active) }));
+  }, [active]);
+
   const applyForm = async (values: SetlistFormValues, isCreate: boolean) => {
     if (!canManage) {
-      throw new Error("Operators can view setlists and go live, but cannot edit them.");
+      throw new Error("Your role can view setlists and go live, but cannot edit them.");
     }
     const payload = {
       name: values.name.trim(),
@@ -249,17 +318,53 @@ export default function Setlists() {
       service_at: values.date ? `${values.date}T09:00:00` : null,
       est_duration_seconds: parseDurationSeconds(values.duration),
     };
+    const target = formTarget ?? active;
     const next = isCreate
       ? await createSetlist({ ...payload, share_church_ids: values.churchIds })
-      : active
-        ? await updateSetlist(active.id, {
+      : target
+        ? await updateSetlist(target.id, {
             ...payload,
             share_church_ids: values.churchIds,
           })
         : await createSetlist({ ...payload, share_church_ids: values.churchIds });
     setFormOpen(false);
-    await loadList(next.id);
+    // Editing from the index row menu keeps the index; otherwise open the result.
+    if (!isCreate && !searchParams.get("setlist")) await reloadIndex();
+    else await loadList(next.id);
+    setFormTarget(null);
     toast.success(isCreate ? "Setlist created." : "Setlist updated.");
+  };
+
+  const openCreate = () => {
+    setFormTarget(null);
+    setFormMode("create");
+    setFormOpen(true);
+  };
+
+  const openEdit = (target: Setlist) => {
+    setFormTarget(target);
+    setFormMode("edit");
+    setFormOpen(true);
+  };
+
+  const editFromIndex = (id: string) => {
+    void getSetlist(id)
+      .then(openEdit)
+      .catch((err) => reportError(err, t("setlists.openError")));
+  };
+
+  const setArchived = (target: Setlist, archived: boolean) => {
+    const wasOpen = active?.id === target.id;
+    void setSetlistArchived(target.id, archived)
+      .then(async () => {
+        if (wasOpen) backToIndex();
+        await reloadIndex();
+      })
+      .then(() => toast.success(archived ? "Setlist archived." : t("setlists.restored")))
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : t("setlists.loadError");
+        toast.error(message);
+      });
   };
 
   const addFromServiceItem = async (item: ServiceItem) => {
@@ -326,6 +431,29 @@ export default function Setlists() {
     );
   };
 
+  const quickAddSong = (song: Song) => {
+    if (!active) return;
+    void addSetlistItem(active.id, {
+      itemType: "song",
+      title: song.title,
+      subtitle: song.artist ?? undefined,
+      durationSeconds: song.duration_seconds,
+      songId: song.id,
+    })
+      .then(setActive)
+      .catch((err) => reportError(err, "Could not add item."));
+  };
+
+  const removeItem = (item: SetlistItem) => {
+    if (!active) return;
+    void deleteSetlistItem(active.id, item.id)
+      .then((next) => {
+        setActive(next);
+        toast.success("Item removed.");
+      })
+      .catch((err) => reportError(err, "Could not remove item."));
+  };
+
   const moveSetlistItem = (fromId: string, toId: string) => {
     if (!canManage || !active?.items || fromId === toId) return;
     const from = active.items.findIndex((row) => row.id === fromId);
@@ -337,12 +465,7 @@ export default function Setlists() {
       nextItems.map((row) => row.id),
     )
       .then(setActive)
-      .catch((err) => {
-        const message =
-          err instanceof Error ? err.message : "Could not reorder items.";
-        setError(message);
-        toast.error(message);
-      });
+      .catch((err) => reportError(err, "Could not reorder items."));
   };
 
   const { bind: bindItem } = useHoldReorder(
@@ -355,6 +478,8 @@ export default function Setlists() {
     if (!q) return setlists;
     return setlists.filter((row) => row.name.toLowerCase().includes(q));
   }, [setlists, query]);
+
+  const groups = useMemo(() => groupSetlists(visibleSetlists), [visibleSetlists]);
 
   const visibleItems = useMemo(() => {
     const items = active?.items ?? [];
@@ -378,678 +503,59 @@ export default function Setlists() {
     return numbers;
   }, [active?.items]);
 
-  if (loading) return <PageSkeleton />;
-
   const selectedId = searchParams.get("setlist");
-  if (!selectedId) {
-    return (
-      <section className="h-full overflow-y-auto custom-scrollbar bg-surface-container-lowest p-4 sm:p-6 lg:p-8">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-8">
-            <div>
-              <h2 className="text-[clamp(1.75rem,3vw,2rem)] font-semibold tracking-[-0.01em] text-on-surface">
-                {t("setlists.title")}
-              </h2>
-              <p className="text-on-surface-variant text-sm mt-2">
-                {total === 1
-                  ? t("setlists.count", { n: total })
-                  : t("setlists.countMany", { n: total })}
-              </p>
-              <div className="mt-4 flex p-1 bg-surface-container-high rounded-full border border-white/5 w-fit">
-                <button
-                  type="button"
-                  onClick={() => switchSetlistTab(false)}
-                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                    !showArchive
-                      ? "bg-primary text-on-primary shadow-lg"
-                      : "text-on-surface-variant hover:text-on-surface"
-                  }`}
-                >
-                  {t("common.active")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => switchSetlistTab(true)}
-                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                    showArchive
-                      ? "bg-primary text-on-primary shadow-lg"
-                      : "text-on-surface-variant hover:text-on-surface"
-                  }`}
-                >
-                  {t("common.archive")}
-                </button>
-              </div>
-              {superadmin ? (
-                <label className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2 max-w-xl">
-                  <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">
-                    {t("setlists.viewingChurch")}
-                  </span>
-                  <select
-                    value={viewChurchId}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      void switchViewChurch(next).catch((err) => {
-                        const message =
-                          err instanceof Error ? err.message : t("setlists.loadError");
-                        setError(message);
-                        toast.error(message);
-                      });
-                    }}
-                    className="bg-surface-container border border-white/10 rounded-lg px-3 py-2 text-sm min-w-[240px]"
-                  >
-                    <option value="">{t("common.selectChurch")}</option>
-                    {churches.map((row) => (
-                      <option key={row.id} value={row.id}>
-                        {row.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-            </div>
-            {canManage ? (
-            <button
-              type="button"
-              onClick={() => {
-                setFormMode("create");
-                setFormOpen(true);
-              }}
-              className="flex items-center gap-2 glow-button text-white px-4 py-2 rounded-lg text-sm font-medium self-start sm:self-auto"
-            >
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              {t("setlists.new")}
-            </button>
-            ) : null}
-          </div>
-          {error ? <p className="mb-6 text-sm text-[#ffb4ab]">{error}</p> : null}
-          {visibleSetlists.length === 0 ? (
-            <p className="text-sm text-on-surface-variant">
-              {query.trim()
-                ? t("setlists.emptyQuery", { q: query.trim() })
-                : superadmin && !viewChurchId
-                  ? t("setlists.chooseChurch")
-                  : showArchive
-                    ? t("setlists.emptyArchive")
-                    : t("setlists.empty")}
-            </p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {visibleSetlists.map((row) => (
-                <div
-                  key={row.id}
-                  className="glass-panel rounded-xl p-5 text-left hover:border-primary/30 transition-colors border border-white/5 relative group"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void openSetlist(row.id).catch((err) => {
-                        const message =
-                          err instanceof Error
-                            ? err.message
-                            : t("setlists.openError");
-                        setError(message);
-                        toast.error(message);
-                      });
-                    }}
-                    className="w-full text-left pr-10"
-                  >
-                  <p className="text-lg font-semibold text-on-surface break-words">
-                    {row.name}
-                  </p>
-                  <p className="text-sm text-on-surface-variant mt-1">
-                    {row.service_type || "Unscheduled"}
-                    {row.service_at
-                      ? ` · ${new Date(row.service_at).toLocaleDateString()}`
-                      : ""}
-                  </p>
-                  <p className="text-[11px] text-on-surface-variant/70 mt-3">
-                    Est. {formatDuration(row.est_duration_seconds)}
-                  </p>
-                  </button>
-                  {showArchive && canManage ? (
-                    <button
-                      type="button"
-                      title={t("common.restore")}
-                      onClick={() => {
-                        void setSetlistArchived(row.id, false)
-                          .then(() =>
-                            loadList(
-                              undefined,
-                              viewChurchId,
-                              superadmin,
-                              0,
-                              false,
-                              true,
-                              { autoOpen: false },
-                            ),
-                          )
-                          .then(() => toast.success(t("setlists.restored")))
-                          .catch((err) => {
-                            const message =
-                              err instanceof Error
-                                ? err.message
-                                : t("setlists.loadError");
-                            toast.error(message);
-                          });
-                      }}
-                      className="absolute top-4 right-4 p-1.5 rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10"
-                    >
-                      <span className="material-symbols-outlined text-[20px]">
-                        unarchive
-                      </span>
-                    </button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-          <LoadMoreBar
-            shown={setlists.length}
-            total={total}
-            hasMore={setlists.length < total}
-            loading={loadingMore}
-            onMore={() => {
-              void loadList(
-                undefined,
-                viewChurchId,
-                superadmin,
-                setlists.length,
-                true,
-              ).catch((err) => {
-                const message =
-                  err instanceof Error ? err.message : t("setlists.loadError");
-                setError(message);
-                toast.error(message);
-              });
-            }}
-          />
-        </div>
-        <SetlistFormModal
-          open={formOpen}
-          mode={formMode}
-          churches={superadmin ? churches : undefined}
-          initialValues={
-            superadmin && viewChurchId ? { churchIds: [viewChurchId] } : undefined
-          }
-          onClose={() => setFormOpen(false)}
-          onSubmit={async (values) => {
-            try {
-              await applyForm(values, true);
-            } catch (err) {
-              const message =
-                err instanceof Error ? err.message : "Could not save setlist.";
-              setError(message);
-              toast.error(message);
-              throw err;
-            }
-          }}
-        />
-      </section>
-    );
-  }
+  if (loading) return selectedId ? <SetlistDetailSkeleton /> : <SetlistIndexSkeleton />;
+  if (selectedId && !active) return <SetlistDetailSkeleton />;
 
-  if (!active) return <PageSkeleton />;
+  const churchPicker = superadmin ? (
+    <label className="flex items-center gap-2 text-[12px] text-on-surface-variant">
+      <Icon name="church" className="text-[14px]" />
+      <span className="hidden sm:inline">{t("setlists.viewingChurch")}</span>
+      <select
+        aria-label={t("setlists.viewingChurch")}
+        value={viewChurchId}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (selectedId) backToIndex();
+          void switchViewChurch(next).catch((err) =>
+            reportError(err, t("setlists.loadError")),
+          );
+        }}
+        className="ui-input !h-8 !w-auto min-w-[180px] max-w-[240px] pr-7"
+      >
+        <option value="">{t("common.selectChurch")}</option>
+        {churches.map((row) => (
+          <option key={row.id} value={row.id}>
+            {row.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  ) : null;
 
-  return (
-    <section className="h-full overflow-y-auto custom-scrollbar relative pb-20">
-      <div className="p-4 sm:p-6 lg:p-8">
-        <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-end">
-          <div className="min-w-0">
-            <nav className="flex flex-wrap gap-2 text-xs text-on-surface-variant mb-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setActive(null);
-                  setSearchParams({}, { replace: true });
-                }}
-                className="hover:text-primary"
-              >
-                {t("setlists.title")}
-              </button>
-              {active ? (
-                <>
-                  <span>/</span>
-                  <span className="text-on-surface">{active.name}</span>
-                </>
-              ) : null}
-            </nav>
-            <h2 className="text-[clamp(1.5rem,3vw,2rem)] leading-10 font-semibold tracking-[-0.01em] text-on-surface">
-              {active?.name ?? "No active setlist"}
-            </h2>
-            {superadmin ? (
-              <label className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2 max-w-xl">
-                <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">
-                  {t("setlists.viewingChurch")}
-                </span>
-                <select
-                  value={viewChurchId}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setActive(null);
-                    setSearchParams({}, { replace: true });
-                    void switchViewChurch(next).catch((err) => {
-                      const message =
-                        err instanceof Error ? err.message : t("setlists.loadError");
-                      setError(message);
-                      toast.error(message);
-                    });
-                  }}
-                  className="bg-surface-container border border-white/10 rounded-lg px-3 py-2 text-sm min-w-[240px]"
-                >
-                  <option value="">{t("common.selectChurch")}</option>
-                  {churches.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {setlists.length ? (
-              <div
-                className="mt-4 flex gap-2 overflow-x-auto custom-scrollbar pb-1"
-                role="tablist"
-                aria-label={t("setlists.title")}
-              >
-                {visibleSetlists.map((row) => {
-                  const selected = active?.id === row.id;
-                  const preferred = preferredId === row.id;
-                  return (
-                    <button
-                      key={row.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={selected}
-                      onClick={() => {
-                        void openSetlist(row.id).catch((err) =>
-                          setError(
-                            err instanceof Error
-                              ? err.message
-                              : t("setlists.openError"),
-                          ),
-                        );
-                      }}
-                      className={`whitespace-nowrap rounded-lg px-4 py-2 text-sm transition-colors ${
-                        selected
-                          ? "bg-primary/15 text-primary border border-primary/30 font-semibold"
-                          : "bg-surface-container border border-white/10 text-on-surface-variant hover:text-on-surface hover:bg-white/5"
-                      }`}
-                    >
-                      <span className="inline-flex items-center gap-1.5">
-                        {preferred ? (
-                          <span
-                            className="material-symbols-outlined text-[14px] text-primary"
-                            title={t("setlists.preferredBadge")}
-                          >
-                            star
-                          </span>
-                        ) : null}
-                        {row.name}
-                      </span>
-                    </button>
-                  );
-                })}
-                {visibleSetlists.length === 0 ? (
-                  <p className="text-sm text-on-surface-variant py-2">
-                    No setlists match “{query.trim()}”.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            {active ? (
-              <div className="flex flex-wrap items-center gap-4 mt-2">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-primary/10 text-primary text-xs font-medium">
-                  <span className="material-symbols-outlined text-[14px]">
-                    calendar_today
-                  </span>
-                  {active.service_at
-                    ? new Date(active.service_at).toLocaleDateString("en-US", {
-                        weekday: "long",
-                        month: "short",
-                        day: "numeric",
-                      })
-                    : active.service_type || "Unscheduled"}
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-high text-on-surface-variant text-xs font-medium">
-                  <span className="material-symbols-outlined text-[14px]">timer</span>
-                  Est. {formatDuration(active.est_duration_seconds)}
-                </div>
-              </div>
-            ) : (
-              <p className="text-on-surface-variant text-sm mt-2">
-                {superadmin && !viewChurchId
-                  ? "Choose a church to see its setlists, or create one and assign it to one or more churches."
-                  : canManage
-                    ? "Create a new setlist to start building your service flow."
-                    : "Open a setlist to review the service, then go live."}
-              </p>
-            )}
-          </div>
+  const errorLine = error ? (
+    <p role="alert" className="px-6 py-2 text-[13px] text-error border-b border-white/5">
+      {error}
+    </p>
+  ) : null;
 
-          <div className="flex gap-2 shrink-0">
-            {canManage ? (
-            <button
-              type="button"
-              onClick={() => {
-                setMenuOpen(false);
-                setFormMode("create");
-                setFormOpen(true);
-              }}
-              className="flex items-center gap-2 glow-button text-white px-4 py-2 rounded-lg text-sm font-medium transition-all"
-            >
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              {t("setlists.new")}
-            </button>
-            ) : null}
-            {canManage ? (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setMenuOpen((prev) => !prev)}
-                className="flex items-center gap-2 bg-surface-container border border-white/10 px-4 py-2 rounded-lg text-sm font-medium hover:bg-surface-container-high transition-colors"
-                aria-label="More setlist actions"
-              >
-                <span className="material-symbols-outlined text-[18px]">
-                  more_horiz
-                </span>
-              </button>
-              {menuOpen ? (
-                <div className="absolute right-0 mt-2 w-44 glass-modal rounded-xl py-1 z-20 shadow-xl">
-                  <button
-                    type="button"
-                    disabled={!active}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setFormMode("edit");
-                      setFormOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs text-on-surface hover:bg-white/5 disabled:opacity-40"
-                  >
-                    Edit Setlist
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!active}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setDeleteOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs text-error hover:bg-white/5 disabled:opacity-40"
-                  >
-                    Delete Setlist
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            ) : null}
-          </div>
-        </div>
-
-        {error ? <p className="mb-6 text-sm text-[#ffb4ab]">{error}</p> : null}
-
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 xl:gap-8">
-          <div className="xl:col-span-8">
-            {visibleItems.map((item, index) => {
-              const hold = canManage ? bindItem(item.id) : {};
-              return (
-              <div key={item.id} className="group relative">
-                <div
-                  {...hold}
-                  className={`glass-panel rounded-xl p-4 flex items-center gap-3 sm:gap-4 transition-all mb-1 hover:border-primary/30 select-none touch-none ${
-                    canManage
-                      ? "cursor-grab active:cursor-grabbing"
-                      : ""
-                  }`}
-                >
-                  {canManage ? (
-                  <span
-                    className="text-on-surface-variant hover:text-on-surface shrink-0"
-                    aria-hidden
-                  >
-                    <span className="material-symbols-outlined text-[20px]">
-                      drag_indicator
-                    </span>
-                  </span>
-                  ) : null}
-                  <div
-                    className={`w-10 h-10 rounded flex items-center justify-center shrink-0 ${
-                      accentIcon[item.item_type]
-                    }`}
-                  >
-                    <span className="material-symbols-outlined">
-                      {item.item_type === "song"
-                        ? "music_note"
-                        : item.item_type === "sermon"
-                          ? "record_voice_over"
-                          : item.item_type === "scripture"
-                            ? "menu_book"
-                            : item.item_type === "roster"
-                              ? "assignment_ind"
-                              : "movie"}
-                    </span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    {item.item_type === "song" && item.song_id ? (
-                      <Link
-                        to={`/songs?song=${item.song_id}`}
-                        data-hold-ignore
-                        className="block min-w-0"
-                      >
-                        <h4 className="font-semibold text-on-surface truncate hover:text-primary">
-                          {item.title}
-                        </h4>
-                      </Link>
-                    ) : item.item_type === "sermon" && item.sermon_id ? (
-                      <Link
-                        to={`/sermon?sermon=${item.sermon_id}`}
-                        data-hold-ignore
-                        className="block min-w-0"
-                      >
-                        <h4 className="font-semibold text-on-surface truncate hover:text-primary">
-                          {item.title}
-                        </h4>
-                      </Link>
-                    ) : (
-                      <h4 className="font-semibold text-on-surface truncate">
-                        {item.title}
-                      </h4>
-                    )}
-                    <p className="text-xs text-on-surface-variant truncate">
-                      {itemMeta(item) || item.subtitle}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-sm font-mono text-primary">
-                      {formatDuration(item.duration_seconds)}
-                    </div>
-                    <div className="text-[10px] text-on-surface-variant uppercase tracking-widest">
-                      {item.item_type === "roster" ? "assignments" : item.item_type}
-                    </div>
-                  </div>
-                  {canManage ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!active) return;
-                      void deleteSetlistItem(active.id, item.id)
-                        .then((next) => {
-                          setActive(next);
-                          toast.success("Item removed.");
-                        })
-                        .catch((err) => {
-                          const message =
-                            err instanceof Error
-                              ? err.message
-                              : "Could not remove item.";
-                          setError(message);
-                          toast.error(message);
-                        });
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-error"
-                    aria-label="Remove item"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">close</span>
-                  </button>
-                  ) : null}
-                </div>
-                {index < visibleItems.length - 1 ? (
-                  <div className="transition-line" />
-                ) : null}
-              </div>
-              );
-            })}
-
-            {visibleItems.length === 0 && (active?.items?.length ?? 0) > 0 ? (
-              <p className="text-sm text-on-surface-variant py-8 text-center">
-                No items match “{query.trim()}”.
-              </p>
-            ) : null}
-
-            {canManage ? (
-            <div className="mt-8 flex justify-center">
-              <button
-                type="button"
-                disabled={!active}
-                onClick={() => setAddItemOpen(true)}
-                className="flex items-center gap-2 px-6 py-3 bg-surface-container-high border border-dashed border-white/20 rounded-xl hover:border-primary/50 hover:bg-surface-container-highest transition-all group disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined text-primary group-hover:scale-110 transition-transform">
-                  add_circle
-                </span>
-                <span className="text-sm font-medium">Add Service Item</span>
-              </button>
-            </div>
-            ) : null}
-          </div>
-
-          <div className="xl:col-span-4 space-y-6">
-            {canManage ? (
-            <div className="glass-panel rounded-2xl p-6 ambient-shadow">
-              <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant mb-4">
-                Library Quick-Add
-              </h3>
-              <div className="space-y-3">
-                {quickSongs.map((song) => (
-                  <div
-                    key={song.id}
-                    className="p-3 bg-surface-container-low rounded-lg border border-white/5 flex items-center justify-between group gap-3"
-                  >
-                    <SongThumb
-                      youtubeUrl={song.youtube_url}
-                      title={song.title}
-                      size="sm"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{song.title}</p>
-                      <p className="text-[10px] text-on-surface-variant">
-                        {song.artist || "Unknown"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={!active}
-                      onClick={() => {
-                        if (!active) return;
-                        void addSetlistItem(active.id, {
-                          itemType: "song",
-                          title: song.title,
-                          subtitle: song.artist ?? undefined,
-                          durationSeconds: song.duration_seconds,
-                          songId: song.id,
-                        }).then(setActive);
-                      }}
-                      className="material-symbols-outlined text-primary shrink-0 disabled:opacity-40"
-                    >
-                      add
-                    </button>
-                  </div>
-                ))}
-                {quickSongs.length === 0 ? (
-                  <p className="text-xs text-on-surface-variant">
-                    Add songs in the library, then drop them here.
-                  </p>
-                ) : null}
-              </div>
-              <Link
-                to="/songs"
-                className="w-full mt-4 text-xs text-primary font-semibold py-2 hover:underline block text-center"
-              >
-                View Full Music Library
-              </Link>
-            </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {active ? (
-        <div className="fixed bottom-4 sm:bottom-6 left-[calc(260px+16px)] right-4 sm:left-[calc(260px+24px)] sm:right-6 h-12 glass-panel rounded-full flex items-center px-4 sm:px-6 gap-2 sm:gap-4 z-30">
-          <div className="flex items-center gap-3 shrink-0 min-w-0">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
-            <span className="text-xs font-mono font-bold truncate">
-              {active.name}
-            </span>
-            {preferredId === active.id ? (
-              <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-primary font-semibold">
-                {t("setlists.preferredBadge")}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex-1" />
-          <button
-            type="button"
-            onClick={() => markPreferredForPresentation(active.id)}
-            className={`flex items-center gap-1.5 text-sm font-semibold shrink-0 ${
-              preferredId === active.id
-                ? "text-primary"
-                : "text-on-surface-variant hover:text-primary"
-            }`}
-            title={t("setlists.useForPresentation")}
-          >
-            <span className="material-symbols-outlined text-[18px]">
-              {preferredId === active.id ? "star" : "star_outline"}
-            </span>
-            <span className="hidden md:inline">
-              {preferredId === active.id
-                ? t("setlists.preferredBadge")
-                : t("setlists.useForPresentation")}
-            </span>
-          </button>
-          <Link
-            to={`/live?setlist=${active.id}`}
-            onClick={() => markPreferredForPresentation(active.id)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary text-on-primary text-sm font-semibold shrink-0 hover:brightness-110"
-          >
-            <span className="material-symbols-outlined text-[18px]">
-              play_arrow
-            </span>
-            {t("setlists.startPresentation")}
-          </Link>
-        </div>
-      ) : null}
-
+  const modals = (
+    <>
       <AddServiceItemModal
         open={addItemOpen}
+        initialStep={addItemStep}
         setlistName={active?.name ?? "Setlist"}
         serviceAt={active?.service_at}
         existingSongNumbers={existingSongNumbers}
         onClose={() => setAddItemOpen(false)}
         onAdd={(item) => {
-          void addFromServiceItem(item).catch((err) => {
-            const message =
-              err instanceof Error ? err.message : "Could not add item.";
-            setError(message);
-            toast.error(message);
-          });
+          void addFromServiceItem(item).catch((err) => reportError(err, "Could not add item."));
         }}
         onAddSongs={async (items) => {
           try {
             await addSongsToSetlist(items);
           } catch (err) {
-            const message =
-              err instanceof Error ? err.message : "Could not add songs.";
-            setError(message);
-            toast.error(message);
+            reportError(err, "Could not add songs.");
             throw err;
           }
         }}
@@ -1057,10 +563,7 @@ export default function Setlists() {
           try {
             await removeSongsFromSetlist(songIds);
           } catch (err) {
-            const message =
-              err instanceof Error ? err.message : "Could not remove songs.";
-            setError(message);
-            toast.error(message);
+            reportError(err, "Could not remove songs.");
             throw err;
           }
         }}
@@ -1071,67 +574,383 @@ export default function Setlists() {
         mode={formMode}
         churches={superadmin ? churches : undefined}
         initialValues={
-          formMode === "edit" && active
-            ? {
-                name: active.name,
-                date: active.service_at?.slice(0, 10) ?? "",
-                duration: active.est_duration_seconds
-                  ? formatDuration(active.est_duration_seconds)
-                  : "",
-                serviceType: active.service_type ?? "Sunday Morning Service",
-                churchIds: active.share_church_ids?.length
-                  ? active.share_church_ids
-                  : [active.church_id],
-              }
+          formMode === "edit" && (formTarget ?? active)
+            ? (() => {
+                const target = (formTarget ?? active) as Setlist;
+                return {
+                  name: target.name,
+                  date: localDateInput(target.service_at),
+                  duration: target.est_duration_seconds
+                    ? formatDuration(target.est_duration_seconds)
+                    : "",
+                  serviceType: target.service_type ?? "Sunday Morning Service",
+                  churchIds: target.share_church_ids?.length
+                    ? target.share_church_ids
+                    : [target.church_id],
+                };
+              })()
             : superadmin && viewChurchId
               ? { churchIds: [viewChurchId] }
               : undefined
         }
-        onClose={() => setFormOpen(false)}
+        onClose={() => {
+          setFormOpen(false);
+          setFormTarget(null);
+        }}
         onSubmit={async (values) => {
           try {
             await applyForm(values, formMode === "create");
           } catch (err) {
-            const message =
-              err instanceof Error ? err.message : "Could not save setlist.";
-            setError(message);
-            toast.error(message);
+            reportError(err, "Could not save setlist.");
             throw err;
           }
         }}
       />
 
       <ConfirmDialog
-        open={deleteOpen}
+        open={Boolean(deleteTarget)}
         title="Delete Setlist?"
-        description={`Are you sure you want to delete "${active?.name ?? ""}"? This action cannot be undone.`}
-        highlight={active ? `"${active.name}"` : undefined}
-        onClose={() => setDeleteOpen(false)}
+        description={`Are you sure you want to delete "${deleteTarget?.name ?? ""}"? This action cannot be undone.`}
+        highlight={deleteTarget ? `"${deleteTarget.name}"` : undefined}
+        onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
-          if (!active) return;
-          const deletedId = active.id;
+          if (!deleteTarget) return;
+          const deletedId = deleteTarget.id;
+          const fromDetail = active?.id === deletedId;
           try {
             await deleteSetlist(deletedId);
             if (readPreferredSetlistId() === deletedId) {
               writePreferredSetlistId("");
               setPreferredId("");
             }
-            setDeleteOpen(false);
-            setActive(null);
+            setDeleteTarget(null);
             setError("");
-            setSearchParams({}, { replace: true });
-            // PreferId undefined + cleared URL; skip reopening the deleted setlist.
-            await loadList(undefined, viewChurchId, superadmin, 0, false, showArchive);
+            if (fromDetail) {
+              setActive(null);
+              setSearchParams({}, { replace: true });
+              // PreferId undefined + cleared URL; skip reopening the deleted setlist.
+              await loadList(undefined, viewChurchId, superadmin, 0, false, showArchive);
+            } else {
+              await reloadIndex(showArchive);
+            }
             toast.success("Setlist deleted.");
           } catch (err) {
-            const message =
-              err instanceof Error ? err.message : "Could not delete setlist.";
-            setError(message);
-            toast.error(message);
+            reportError(err, "Could not delete setlist.");
             throw err;
           }
         }}
       />
+    </>
+  );
+
+  /* ── Index ───────────────────────────────────────────────────────────── */
+
+  if (!selectedId || !active) {
+    const emptyText = query.trim()
+      ? t("setlists.emptyQuery", { q: query.trim() })
+      : superadmin && !viewChurchId
+        ? t("setlists.chooseChurch")
+        : showArchive
+          ? t("setlists.emptyArchive")
+          : t("setlists.empty");
+
+    return (
+      <section className="h-full flex flex-col bg-surface-container-lowest">
+        <PageHeader
+          title={t("setlists.title")}
+          meta={
+            total === 1
+              ? t("setlists.count", { n: total })
+              : t("setlists.countMany", { n: total })
+          }
+          actions={
+            canManage ? (
+              <Button variant="primary" icon="add" onClick={openCreate}>
+                {t("setlists.new")}
+              </Button>
+            ) : null
+          }
+          toolbar={
+            <>
+              <ViewTabs
+                label={t("setlists.title")}
+                value={showArchive ? "archive" : "active"}
+                onChange={(value) => switchSetlistTab(value === "archive")}
+                tabs={[
+                  { id: "active", label: t("common.active") },
+                  { id: "archive", label: t("common.archive") },
+                ]}
+              />
+              <div className="flex-1" />
+              {churchPicker}
+            </>
+          }
+        />
+        {errorLine}
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+          <div className="min-h-full lg:h-full flex flex-col px-4 sm:px-6 py-4">
+          <SetlistInsights
+            viewChurchId={superadmin ? viewChurchId : null}
+            version={setlists}
+          />
+          {visibleSetlists.length === 0 ? (
+            <EmptyState
+              icon={showArchive ? "unarchive" : "queue_music"}
+              title={emptyText}
+              action={
+                canManage && !query.trim() && !showArchive && !(superadmin && !viewChurchId) ? (
+                  <Button variant="secondary" icon="add" onClick={openCreate}>
+                    {t("setlists.new")}
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+              <LibraryTable
+                ariaLabel="Setlists"
+                className="min-h-[240px]"
+                columns={[
+                  { key: "name", header: "Title" },
+                  { key: "type", header: "Service", hideBelow: "md" },
+                  { key: "items", header: "Items", align: "right", hideBelow: "md" },
+                  { key: "duration", header: "Length", align: "right", hideBelow: "sm" },
+                  { key: "date", header: "Date", align: "right" },
+                ]}
+                groups={groups.map((group) => ({
+                  id: group.id,
+                  label: group.label,
+                  rows: group.items.map((row) => {
+                    const stats = rowStats[row.id];
+                    const seconds = row.est_duration_seconds || stats?.seconds || 0;
+                    const preferred = preferredId === row.id;
+                    const menu: MenuItem[] = [
+                      {
+                        label: preferred
+                          ? t("setlists.preferredBadge")
+                          : t("setlists.useForPresentation"),
+                        icon: "star",
+                        disabled: preferred,
+                        onSelect: () => markPreferredForPresentation(row.id),
+                      },
+                    ];
+                    if (canManage) {
+                      menu.push(
+                        { label: "Edit setlist", icon: "edit", onSelect: () => editFromIndex(row.id) },
+                        showArchive
+                          ? {
+                              label: t("common.restore"),
+                              icon: "unarchive",
+                              onSelect: () => setArchived(row, false),
+                            }
+                          : {
+                              label: "Archive",
+                              icon: "archive",
+                              onSelect: () => setArchived(row, true),
+                            },
+                        {
+                          label: "Delete setlist",
+                          icon: "delete",
+                          danger: true,
+                          onSelect: () => setDeleteTarget(row),
+                        },
+                      );
+                    }
+                    return {
+                      id: row.id,
+                      label: row.name,
+                      onOpen: () => {
+                        void openSetlist(row.id).catch((err) =>
+                          reportError(err, t("setlists.openError")),
+                        );
+                      },
+                      leading: <DateBlock value={row.service_at} highlight={group.id === "today"} />,
+                      cells: {
+                        name: (
+                          <span className="inline-flex items-center gap-1.5 max-w-full">
+                            <span className="truncate">{row.name}</span>
+                            {preferred ? (
+                              <Icon
+                                name="star"
+                                className="text-[13px] text-primary shrink-0"
+                                title={t("setlists.preferredBadge")}
+                              />
+                            ) : null}
+                          </span>
+                        ),
+                        type: row.service_type || "—",
+                        items: stats ? (
+                          <span className="tabular-nums">{stats.count}</span>
+                        ) : (
+                          <Skeleton className="inline-block h-3 w-6 align-middle" />
+                        ),
+                        duration: seconds ? (
+                          <span className="tabular-nums">{formatDuration(seconds)}</span>
+                        ) : stats ? (
+                          "—"
+                        ) : (
+                          <Skeleton className="inline-block h-3 w-8 align-middle" />
+                        ),
+                        date: (
+                          <span className="tabular-nums whitespace-nowrap">
+                            {row.service_at
+                              ? `${serviceDate(row.service_at)} · ${serviceTime(row.service_at)}`
+                              : "No date"}
+                          </span>
+                        ),
+                      },
+                      actions: <RowMenu label="More setlist actions" items={menu} />,
+                    };
+                  }),
+                }))}
+              />
+          )}
+          </div>
+          {loadingMore ? <SetlistRowsSkeleton rows={3} /> : null}
+          <div className={loadingMore ? "hidden" : "px-6"}>
+            <LoadMoreBar
+              shown={setlists.length}
+              total={total}
+              hasMore={setlists.length < total}
+              loading={loadingMore}
+              onMore={() => {
+                void loadList(
+                  undefined,
+                  viewChurchId,
+                  superadmin,
+                  setlists.length,
+                  true,
+                ).catch((err) => reportError(err, t("setlists.loadError")));
+              }}
+            />
+          </div>
+        </div>
+        {modals}
+      </section>
+    );
+  }
+
+  /* ── Detail ──────────────────────────────────────────────────────────── */
+
+  const items = active.items ?? [];
+  const totalSeconds = itemsDuration(items);
+  const preferred = preferredId === active.id;
+  const archived = Boolean(active.archived_at);
+  const detailMenu: MenuItem[] = canManage
+    ? [
+        archived
+          ? { label: t("common.restore"), icon: "unarchive", onSelect: () => setArchived(active, false) }
+          : { label: "Archive", icon: "archive", onSelect: () => setArchived(active, true) },
+        {
+          label: "Delete setlist",
+          icon: "delete",
+          danger: true,
+          onSelect: () => setDeleteTarget(active),
+        },
+      ]
+    : [];
+
+  return (
+    <section className="h-full flex flex-col bg-surface-container-lowest">
+      <PageHeader
+        crumbs={[{ label: t("setlists.title"), onClick: backToIndex }]}
+        title={active.name}
+        meta={[
+          active.service_at ? serviceDate(active.service_at, true) : active.service_type || "Unscheduled",
+          `${items.length} ${items.length === 1 ? "item" : "items"}`,
+          formatDuration(totalSeconds || active.est_duration_seconds),
+        ].join(" · ")}
+        actions={
+          <>
+            {churchPicker}
+            {archived ? <span className="ui-badge">{t("common.archive")}</span> : null}
+            <IconButton
+              icon={preferred ? "star" : "star_outline"}
+              label={preferred ? t("setlists.preferredBadge") : t("setlists.useForPresentation")}
+              aria-pressed={preferred}
+              onClick={() => markPreferredForPresentation(active.id)}
+              className={preferred ? "!text-primary" : undefined}
+            />
+            {canManage ? (
+              <Button
+                variant="secondary"
+                icon="edit"
+                aria-label="Edit setlist"
+                onClick={() => openEdit(active)}
+              >
+                Edit
+              </Button>
+            ) : null}
+            {detailMenu.length ? (
+              <RowMenu label="More setlist actions" items={detailMenu} />
+            ) : null}
+            <Link
+              to={`/live?setlist=${active.id}`}
+              onClick={() => markPreferredForPresentation(active.id)}
+              className="ui-btn ui-btn-primary"
+            >
+              <Icon name="play_arrow" className="text-[16px]" />
+              {t("live.goLive")}
+            </Link>
+          </>
+        }
+      />
+      {errorLine}
+      <div
+        className={`flex-1 min-h-0 grid grid-cols-1 overflow-y-auto lg:overflow-hidden custom-scrollbar ${
+          canManage ? "lg:grid-cols-[minmax(0,1fr)_340px]" : ""
+        }`}
+      >
+        <div className="min-h-0 lg:overflow-y-auto custom-scrollbar px-4 sm:px-6 py-6">
+          {/* ── Setlist default stage background ── */}
+          <div className="mb-5">
+            <SetlistBackgroundControl
+              setlist={active}
+              canEdit={canManage}
+              onChange={(next) =>
+                setActive((prev) =>
+                  prev && prev.id === next.id
+                    ? { ...prev, ...next, items: next.items ?? prev.items }
+                    : prev,
+                )
+              }
+            />
+          </div>
+          {active.items ? (
+            <RunOfShow
+              items={items}
+              visible={visibleItems}
+              canManage={canManage}
+              bind={bindItem}
+              onRemove={removeItem}
+              onAddItem={() => {
+                setAddItemStep(undefined);
+                setAddItemOpen(true);
+              }}
+              noMatch={
+                <p className="py-8 text-[13px] text-on-surface-variant text-center">
+                  No items match “{query.trim()}”.
+                </p>
+              }
+            />
+          ) : (
+            <RunOfShowSkeleton />
+          )}
+        </div>
+        {canManage ? (
+          <div className="min-h-0 lg:overflow-y-auto custom-scrollbar flex flex-col">
+            <AddToSetlistPanel
+              suggestions={quickSongs}
+              inSetlist={existingSongNumbers}
+              onAddSong={quickAddSong}
+              onOpenFlow={(kind) => {
+                setAddItemStep(kind);
+                setAddItemOpen(true);
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
+      {modals}
     </section>
   );
 }

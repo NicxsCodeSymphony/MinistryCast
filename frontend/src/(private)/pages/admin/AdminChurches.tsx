@@ -1,7 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import ConfirmDialog from "../../../components/modals/ConfirmDialog";
 import { LoadMoreBar } from "../../../components/LoadMoreBar";
-import { Skeleton, TableSkeleton } from "../../../components/Skeleton";
+import { AdminRowsSkeleton } from "../../../components/admin/AdminSkeletons";
+import { EditorPane, Field } from "../../../components/admin/EditorPane";
+import LibraryTable, { type LibraryColumn } from "../../../components/LibraryTable";
+import {
+  InitialsTile,
+  PlatformHeader,
+  StatusBadge,
+  relativeTime,
+} from "../../../components/admin/PlatformHeader";
+import {
+  Button,
+  EmptyState,
+  Properties,
+  RowMenu,
+  ViewTabs,
+} from "../../../components/ui";
 import { PAGE_SIZE } from "../../../lib/types";
 import {
   adminDeleteChurch,
@@ -10,20 +26,29 @@ import {
   type AdminChurch,
 } from "../../../lib/admin";
 import { useSearch } from "../../../lib/SearchContext";
+import { uploadChurchPhoto } from "../../../lib/auth";
+import Icon from "../../../components/Icon";
 import { useToast } from "../../../lib/ToastContext";
-import { AdminBackLink, formatWhen, StatusChip } from "./adminUi";
+import { formatWhen } from "./adminUi";
 
 const PLATFORM = "00000000-0000-0000-0000-000000000001";
+
+type StatusFilter = "all" | "active" | "pending" | "suspended";
 
 export default function AdminChurches() {
   const toast = useToast();
   const { query } = useSearch();
+  const [params, setParams] = useSearchParams();
   const [rows, setRows] = useState<AdminChurch[]>([]);
   const [selected, setSelected] = useState<AdminChurch | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState("active");
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,6 +56,7 @@ export default function AdminChurches() {
   const [confirm, setConfirm] = useState<"delete" | "suspend" | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [filter, setFilter] = useState<StatusFilter>("all");
 
   const load = async (fresh = false) => {
     setError("");
@@ -58,28 +84,91 @@ export default function AdminChurches() {
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [query]);
+  }, [query, filter]);
+
+  // Deep link from the overview: /admin/churches?open=<id>
+  const openId = params.get("open");
+  useEffect(() => {
+    if (!openId || !rows.length) return;
+    const row = rows.find((r) => r.id === openId);
+    if (row) open(row);
+    const next = new URLSearchParams(params);
+    next.delete("open");
+    setParams(next, { replace: true });
+  }, [openId, rows]);
+
+  const counts = useMemo(
+    () => ({
+      all: rows.length,
+      active: rows.filter((r) => r.status === "active").length,
+      pending: rows.filter((r) => r.status === "pending").length,
+      suspended: rows.filter((r) => r.status === "suspended").length,
+    }),
+    [rows],
+  );
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) =>
-      [row.name, row.email, row.status].some((value) =>
-        value.toLowerCase().includes(q),
-      ),
+    return rows.filter(
+      (row) =>
+        (filter === "all" || row.status === filter) &&
+        (!q ||
+          [row.name, row.email, row.status].some((value) =>
+            value.toLowerCase().includes(q),
+          )),
     );
-  }, [query, rows]);
+  }, [query, rows, filter]);
   const paged = visible.slice(0, visibleCount);
 
   const locked = selected?.id === PLATFORM;
 
-  const open = (row: AdminChurch) => {
-    setSelected(row);
+  const syncForm = (row: AdminChurch) => {
     setName(row.name);
     setEmail(row.email);
     setStatus(row.status);
-    setConfirm(null);
+    setAddress(row.address ?? "");
+    setPhone(row.phone ?? "");
+  };
+
+  /** Re-read the list and refresh the selected church from it. */
+  const reloadSelected = async (id: string) => {
+    const next = await load(true);
+    const fresh = next?.find((row) => row.id === id) ?? null;
+    setSelected(fresh);
+    return fresh;
+  };
+
+  /** Upload a new logo (or clear it with `null`) and save it immediately. */
+  const changePhoto = async (file: File | null) => {
+    if (!selected || locked) return;
+    setPhotoBusy(true);
+    setError("");
+    try {
+      const url = file
+        ? await uploadChurchPhoto(file, selected.id, selected.photo_url)
+        : "";
+      await adminUpdateChurch(selected.id, { photo_url: url });
+      await reloadSelected(selected.id);
+      toast.success(file ? "Logo updated." : "Logo removed.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not update logo.";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  /** Make a row the subject of the editor / confirm dialogs. */
+  const pick = (row: AdminChurch) => {
+    setSelected(row);
+    syncForm(row);
     setSavedFlash(false);
+  };
+
+  const open = (row: AdminChurch) => {
+    pick(row);
+    setConfirm(null);
     setPanelOpen(true);
   };
 
@@ -96,15 +185,12 @@ export default function AdminChurches() {
     setError("");
     setSavedFlash(false);
     try {
-      await adminUpdateChurch(selected.id, { name, email, status });
+      if (!name.trim()) throw new Error("Church name is required.");
+      await adminUpdateChurch(selected.id, { name, email, status, address, phone });
       const next = await load(true);
       const fresh = next?.find((row) => row.id === selected.id) ?? null;
       setSelected(fresh);
-      if (fresh) {
-        setName(fresh.name);
-        setEmail(fresh.email);
-        setStatus(fresh.status);
-      }
+      if (fresh) syncForm(fresh);
       setSavedFlash(true);
       toast.success("Church updated.");
     } catch (err) {
@@ -126,11 +212,7 @@ export default function AdminChurches() {
       const next = await load(true);
       const fresh = next?.find((row) => row.id === selected.id) ?? null;
       setSelected(fresh);
-      if (fresh) {
-        setName(fresh.name);
-        setEmail(fresh.email);
-        setStatus(fresh.status);
-      }
+      if (fresh) syncForm(fresh);
       toast.success(
         nextStatus === "suspended" ? "Church suspended." : "Church restored.",
       );
@@ -165,275 +247,328 @@ export default function AdminChurches() {
     }
   };
 
-  if (loading) {
-    return (
-      <section className="h-full overflow-y-auto custom-scrollbar px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        <div className="space-y-4">
-          <Skeleton className="h-5 w-40" />
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-56" />
-            <Skeleton className="h-4 w-80 max-w-full" />
-          </div>
-          <TableSkeleton rows={8} />
-        </div>
-      </section>
-    );
-  }
+  const showing = `Showing ${paged.length} of ${visible.length}${
+    visible.length !== rows.length ? ` (filtered from ${rows.length})` : ""
+  }`;
 
   return (
-    <section className="h-full overflow-hidden flex flex-col px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-      <div className="shrink-0 mb-2">
-        <AdminBackLink />
-      </div>
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 shrink-0 mb-6">
-        <header>
-          <h2 className="text-[clamp(1.75rem,3vw,2rem)] font-semibold tracking-[-0.01em] text-on-surface mb-1">
-            Churches
-          </h2>
-          <p className="text-on-surface-variant text-sm">
-            Search the roster, then open a row — the list shrinks and the editor
-            slides in beside it.
-          </p>
-        </header>
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={() => void load(true)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-on-surface-variant hover:bg-white/5 disabled:opacity-60 self-start"
-        >
-          <span className="material-symbols-outlined text-[18px]">refresh</span>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+    <section className="h-full overflow-hidden flex flex-col">
+      <PlatformHeader
+        title="Churches"
+        meta={loading ? undefined : `${rows.length} ${rows.length === 1 ? "church" : "churches"}`}
+        approvals={counts.pending}
+        actions={
+          <Button
+            variant="ghost"
+            size="sm"
+            icon="refresh"
+            disabled={refreshing || loading}
+            onClick={() => void load(true).catch(() => undefined)}
+          >
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </Button>
+        }
+      />
+
+      <div className="shrink-0 flex items-center gap-3 h-12 px-6 border-b border-white/5">
+        <ViewTabs
+          label="Filter churches by status"
+          value={filter}
+          onChange={setFilter}
+          tabs={[
+            { id: "all", label: "All", count: counts.all },
+            { id: "active", label: "Active", count: counts.active },
+            { id: "pending", label: "Pending", count: counts.pending },
+            { id: "suspended", label: "Suspended", count: counts.suspended },
+          ]}
+        />
+        {!loading ? (
+          <span className="ml-auto text-[12px] text-on-surface-variant tabular-nums">{showing}</span>
+        ) : null}
       </div>
 
       {error ? (
-        <div className="mb-4 shrink-0 rounded-xl border border-[#ffb4ab]/30 bg-[#ffb4ab]/10 px-4 py-3 text-sm text-[#ffb4ab] flex items-center justify-between gap-3">
+        <div
+          role="alert"
+          className="shrink-0 flex items-center justify-between gap-3 px-6 py-2.5 border-b border-white/5 text-[13px] text-error"
+        >
           <span>{error}</span>
-          <button
-            type="button"
-            className="underline shrink-0"
-            onClick={() => void load(true)}
-          >
+          <Button variant="ghost" size="sm" onClick={() => void load(true).catch(() => undefined)}>
             Retry
-          </button>
+          </Button>
         </div>
       ) : null}
 
-      <div className="flex-1 min-h-0 flex gap-0">
-        <div
-          className={`min-w-0 flex flex-col transition-[flex-basis,max-width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-            panelOpen
-              ? "flex-[1_1_58%] max-w-[58%] xl:max-w-none"
-              : "flex-[1_1_100%] max-w-full"
-          }`}
-        >
-          <p className="text-xs text-on-surface-variant mb-3 shrink-0">
-            Showing {paged.length} of {visible.length}
-            {visible.length !== rows.length
-              ? ` (filtered from ${rows.length})`
-              : ""}
-          </p>
-
-          {!visible.length ? (
-            <p className="text-sm text-on-surface-variant py-12 text-center">
-              {query.trim()
-                ? "No churches match this search."
-                : "No churches yet."}
-            </p>
+      <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-w-0 flex flex-col px-4 sm:px-6 pt-4 pb-6">
+          {loading ? (
+            <AdminRowsSkeleton rows={8} />
+          ) : !visible.length ? (
+            <EmptyState
+              icon="church"
+              title={
+                query.trim()
+                  ? "No churches match this search."
+                  : filter !== "all"
+                    ? "No churches with this status."
+                    : "No churches yet."
+              }
+            />
           ) : (
-            <div className="rounded-xl border border-white/5 overflow-hidden flex-1 min-h-0 flex flex-col bg-surface-container-low/40">
-              <div className="overflow-auto custom-scrollbar flex-1 min-h-0">
-                <table className="w-full text-left text-sm min-w-[640px]">
-                  <thead className="sticky top-0 bg-surface-container-lowest/95 backdrop-blur text-[11px] uppercase tracking-wider text-on-surface-variant z-[1]">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Church</th>
-                      {!panelOpen ? (
-                        <th className="px-4 py-3 font-medium hidden md:table-cell">
-                          Activity
-                        </th>
-                      ) : null}
-                      <th className="px-4 py-3 font-medium">Status</th>
-                      <th className="px-4 py-3 font-medium w-10" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paged.map((row) => {
-                      const active = panelOpen && selected?.id === row.id;
-                      return (
-                        <tr
-                          key={row.id}
-                          className={`border-t border-white/5 cursor-pointer transition-colors ${
-                            active ? "bg-primary/10" : "hover:bg-white/[0.03]"
-                          }`}
-                          onClick={() => open(row)}
-                        >
-                          <td className="px-4 py-3">
-                            <div className="min-w-0">
-                              <p className="font-semibold text-on-surface truncate">
-                                {row.name}
-                              </p>
-                              <p className="text-xs text-on-surface-variant truncate">
-                                {row.email}
-                                {panelOpen
-                                  ? ` · ${row.account_count} accounts`
-                                  : ""}
-                              </p>
-                            </div>
-                          </td>
-                          {!panelOpen ? (
-                            <td className="px-4 py-3 text-on-surface-variant whitespace-nowrap hidden md:table-cell">
-                              {row.account_count} accounts · {row.action_count}{" "}
-                              actions · {row.device_count} devices
-                            </td>
-                          ) : null}
-                          <td className="px-4 py-3">
-                            <StatusChip status={row.status} />
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className="material-symbols-outlined text-on-surface-variant text-[20px]">
-                              chevron_right
+            <LibraryTable
+              ariaLabel="Churches"
+              className="[&>table]:min-w-0"
+              columns={[
+                { key: "church", header: "Church" },
+                ...(panelOpen
+                  ? []
+                  : ([
+                      { key: "accounts", header: "Accounts", align: "right", hideBelow: "md", className: "w-24" },
+                      { key: "devices", header: "Devices", align: "right", hideBelow: "md", className: "w-24" },
+                      { key: "actions", header: "Actions", align: "right", hideBelow: "lg", className: "w-24" },
+                      { key: "created", header: "Created", align: "right", hideBelow: "lg", className: "w-32" },
+                    ] as LibraryColumn[])),
+                { key: "status", header: "Status", align: "right", className: "w-32" },
+              ]}
+              groups={[
+                {
+                  id: "churches",
+                  rows: paged.map((row) => {
+                    const rowLocked = row.id === PLATFORM;
+                    return {
+                      id: row.id,
+                      label: row.name,
+                      selected: panelOpen && selected?.id === row.id,
+                      onOpen: () => open(row),
+                      leading: <InitialsTile name={row.name} photoUrl={row.photo_url} />,
+                      cells: {
+                        church: (
+                          <>
+                            <span className="block truncate">{row.name}</span>
+                            <span className="block truncate text-[12px] font-normal text-on-surface-variant">
+                              {row.email}
+                              {panelOpen ? ` · ${row.account_count} accounts` : ""}
                             </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <div className="px-4 py-3 border-t border-white/5 shrink-0">
-                <LoadMoreBar
-                  shown={paged.length}
-                  total={visible.length}
-                  hasMore={paged.length < visible.length}
-                  onMore={() => setVisibleCount((n) => n + PAGE_SIZE)}
-                />
-              </div>
-            </div>
+                          </>
+                        ),
+                        accounts: <span className="tabular-nums">{row.account_count}</span>,
+                        devices: <span className="tabular-nums">{row.device_count}</span>,
+                        actions: <span className="tabular-nums">{row.action_count}</span>,
+                        created: (
+                          <span className="whitespace-nowrap" title={formatWhen(row.created_at)}>
+                            {relativeTime(row.created_at)}
+                          </span>
+                        ),
+                        status: <StatusBadge status={row.status} />,
+                      },
+                      actions: (
+                        <RowMenu
+                          label={`Actions for ${row.name}`}
+                          items={[
+                            { label: "Edit", icon: "edit", onSelect: () => open(row) },
+                            {
+                              label: row.status === "suspended" ? "Restore" : "Suspend",
+                              icon: row.status === "suspended" ? "undo" : "block",
+                              disabled: rowLocked,
+                              onSelect: () => {
+                                pick(row);
+                                setConfirm("suspend");
+                              },
+                            },
+                            {
+                              label: "Delete",
+                              icon: "delete",
+                              danger: true,
+                              disabled: rowLocked,
+                              onSelect: () => {
+                                pick(row);
+                                setConfirm("delete");
+                              },
+                            },
+                          ]}
+                        />
+                      ),
+                    };
+                  }),
+                },
+              ]}
+              footer={
+                paged.length < visible.length ? (
+                  <div className="px-6 pb-6">
+                    <LoadMoreBar
+                      shown={paged.length}
+                      total={visible.length}
+                      hasMore
+                      onMore={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                    />
+                  </div>
+                ) : null
+              }
+            />
           )}
         </div>
 
-        <aside
-          aria-hidden={!panelOpen}
-          className={`overflow-hidden transition-[flex-basis,max-width,opacity,transform,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-            panelOpen
-              ? "flex-[0_0_min(420px,42%)] max-w-[420px] ml-4 opacity-100 translate-x-0"
-              : "flex-[0_0_0] max-w-0 ml-0 opacity-0 translate-x-6 pointer-events-none"
-          }`}
-        >
-          <div className="w-[min(420px,100%)] h-full min-h-[420px] rounded-xl border border-white/10 bg-surface-container-low flex flex-col overflow-hidden">
-            {selected ? (
+        <EditorPane
+          open={panelOpen}
+          onClose={closePanel}
+          title={selected?.name}
+          subtitle={selected ? <StatusBadge status={selected.status} /> : null}
+          leading={selected ? <InitialsTile name={selected.name} photoUrl={selected.photo_url} /> : null}
+          footer={
+            selected ? (
               <>
-                <div className="flex items-start justify-between gap-3 p-5 border-b border-white/5 shrink-0">
-                  <div className="min-w-0">
-                    <h2 className="text-lg font-semibold text-on-surface truncate">
-                      {selected.name}
-                    </h2>
-                    <p className="text-xs text-on-surface-variant mt-1">
-                      Created {formatWhen(selected.created_at)}
-                      {selected.onboarded_at
-                        ? ` · onboarded ${formatWhen(selected.onboarded_at)}`
-                        : ""}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={closePanel}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5"
-                    aria-label="Close"
-                  >
-                    <span className="material-symbols-outlined">close</span>
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-5">
-                  {savedFlash ? (
-                    <p className="text-sm text-primary">Changes saved.</p>
-                  ) : null}
-
-                  <div className="rounded-lg bg-white/[0.03] border border-white/5 px-3 py-2.5 text-xs text-on-surface-variant">
-                    {selected.account_count} accounts · {selected.action_count}{" "}
-                    actions · {selected.device_count} devices
-                  </div>
-
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant">
-                      Name
-                    </span>
-                    <input
-                      value={name}
-                      disabled={locked}
-                      onChange={(event) => setName(event.target.value)}
-                      className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none disabled:opacity-50"
-                    />
-                  </label>
-
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant">
-                      Email
-                    </span>
-                    <input
-                      value={email}
-                      disabled={locked}
-                      onChange={(event) => setEmail(event.target.value)}
-                      className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none disabled:opacity-50"
-                    />
-                  </label>
-
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant">
-                      Status
-                    </span>
-                    <select
-                      value={status}
-                      disabled={locked}
-                      onChange={(event) => setStatus(event.target.value)}
-                      className="w-full bg-surface border border-outline-variant rounded-lg px-4 py-2.5 text-on-surface focus:ring-2 focus:ring-primary focus:outline-none disabled:opacity-50"
-                    >
-                      <option value="pending">Pending</option>
-                      <option value="active">Active</option>
-                      <option value="suspended">Suspended</option>
-                      <option value="offline">Offline</option>
-                      <option value="rejected">Rejected</option>
-                    </select>
-                  </label>
-
-                  {locked ? (
-                    <p className="text-xs text-on-surface-variant">
-                      The platform church is protected.
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="p-5 border-t border-white/5 flex flex-wrap gap-2 shrink-0">
-                  <button
-                    type="button"
-                    disabled={busy || locked}
-                    onClick={() => void save()}
-                    className="px-4 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold disabled:opacity-50"
-                  >
-                    {busy ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    type="button"
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busy || photoBusy || locked}
+                  onClick={() => void save()}
+                >
+                  {busy ? "Saving…" : "Save"}
+                </Button>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     disabled={busy || locked}
                     onClick={() => setConfirm("suspend")}
-                    className="px-4 py-2 rounded-lg border border-white/10 text-sm disabled:opacity-50"
                   >
                     {selected.status === "suspended" ? "Restore" : "Suspend"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
                     disabled={busy || locked}
                     onClick={() => setConfirm("delete")}
-                    className="px-4 py-2 rounded-lg border border-error/30 text-error text-sm disabled:opacity-50"
                   >
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </>
-            ) : null}
-          </div>
-        </aside>
+            ) : null
+          }
+        >
+          {selected ? (
+            <>
+              {savedFlash ? (
+                <p className="text-[13px] text-primary">Changes saved.</p>
+              ) : null}
+
+              <Properties
+                items={[
+                  { label: "Accounts", value: <span className="tabular-nums">{selected.account_count}</span> },
+                  { label: "Devices", value: <span className="tabular-nums">{selected.device_count}</span> },
+                  { label: "Actions", value: <span className="tabular-nums">{selected.action_count}</span> },
+                  { label: "Created", value: formatWhen(selected.created_at) },
+                  {
+                    label: "Onboarded",
+                    value: selected.onboarded_at ? formatWhen(selected.onboarded_at) : "Not yet",
+                  },
+                ]}
+              />
+
+              <div className="border-t border-white/5 pt-5 space-y-4">
+                <div className="space-y-1.5">
+                  <span className="block text-[12px] font-medium text-on-surface-variant">Logo</span>
+                  <div className="flex items-center gap-3">
+                    <span className="w-16 h-16 shrink-0 rounded-lg overflow-hidden bg-surface-container-highest border border-white/10 flex items-center justify-center">
+                      {selected.photo_url ? (
+                        <img src={selected.photo_url} alt={`${selected.name} logo`} className="w-full h-full object-cover" />
+                      ) : (
+                        <Icon name="church" className="text-[22px] text-on-surface-variant" />
+                      )}
+                    </span>
+                    <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      className="hidden"
+                      onChange={(event) => {
+                        void changePhoto(event.target.files?.[0] ?? null);
+                        event.target.value = "";
+                      }}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={locked || photoBusy || busy}
+                        onClick={() => photoInputRef.current?.click()}
+                      >
+                        {photoBusy ? "Uploading…" : selected.photo_url ? "Replace" : "Upload"}
+                      </Button>
+                      {selected.photo_url ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={locked || photoBusy || busy}
+                          onClick={() => void changePhoto(null)}
+                        >
+                          Remove
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-[12px] text-on-surface-variant">
+                    Shown on the church sidebar and projector logo. JPG, PNG, WebP or GIF, up to 5 MB.
+                  </p>
+                </div>
+                <Field label="Name">
+                  <input
+                    value={name}
+                    disabled={locked}
+                    onChange={(event) => setName(event.target.value)}
+                    className="ui-input disabled:opacity-50"
+                  />
+                </Field>
+                <Field label="Email">
+                  <input
+                    value={email}
+                    disabled={locked}
+                    onChange={(event) => setEmail(event.target.value)}
+                    className="ui-input disabled:opacity-50"
+                  />
+                </Field>
+                <Field label="Address">
+                  <input
+                    value={address}
+                    disabled={locked}
+                    onChange={(event) => setAddress(event.target.value)}
+                    className="ui-input disabled:opacity-50"
+                  />
+                </Field>
+                <Field label="Phone">
+                  <input
+                    value={phone}
+                    type="tel"
+                    disabled={locked}
+                    onChange={(event) => setPhone(event.target.value)}
+                    className="ui-input disabled:opacity-50"
+                  />
+                </Field>
+                <Field label="Status">
+                  <select
+                    value={status}
+                    disabled={locked}
+                    onChange={(event) => setStatus(event.target.value)}
+                    className="ui-input disabled:opacity-50"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="offline">Offline</option>
+                    <option value="rejected">Rejected</option>
+                  </select>
+                </Field>
+              </div>
+
+              {locked ? (
+                <p className="text-[12px] text-on-surface-variant">
+                  The platform church is protected.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </EditorPane>
       </div>
 
       <ConfirmDialog

@@ -5,6 +5,8 @@ import ConfirmDialog from "./modals/ConfirmDialog";
 import RosterEditPanel from "./liveEdit/RosterEditPanel";
 import ScriptureEditPanel from "./liveEdit/ScriptureEditPanel";
 import SongEditPanel from "./liveEdit/SongEditPanel";
+import SlideCanvas from "./sermon/SlideCanvas";
+import { composeSlideContent, readSlideLayout } from "./sermon/slideLayout";
 import type { EditPanelHandle, StageActions } from "./liveEdit/shared";
 import {
   deleteSermonSlide,
@@ -27,6 +29,7 @@ import { sermonPlainText } from "../lib/sermonMarkup";
 import type { StageBackgroundId } from "../lib/stageBackgrounds";
 import { useToast } from "../lib/ToastContext";
 import type { LiveCue, Presentation, SermonSlide, Setlist, SetlistItem } from "../lib/types";
+import Icon from "./Icon";
 
 type SlideDraft = { content?: string; scripture_reference?: string | null };
 
@@ -375,6 +378,10 @@ export default function LiveEditWorkspace({
         return;
       }
       if (isTypingTarget(event.target)) return;
+      // Keys inside the slide canvas belong to the canvas (nudging, selecting).
+      if (event.target instanceof Element && event.target.closest("[data-testid='slide-canvas']")) {
+        return;
+      }
       if (event.code === "Space" || event.key === "ArrowRight" || event.key === "PageDown") {
         event.preventDefault();
         onNext();
@@ -390,6 +397,9 @@ export default function LiveEditWorkspace({
   });
 
   const editingPoint = Boolean(selectedSlide && !isSermonSpace(selectedSlide.content));
+  // Slides designed on the canvas are edited on the canvas, so the saved
+  // layout (what the stage renders) carries the edit.
+  const canvasLayout = editingPoint && selectedSlide ? readSlideLayout(contentOf(selectedSlide)) : null;
 
   if (!open) return null;
 
@@ -441,10 +451,10 @@ export default function LiveEditWorkspace({
   ) : null;
 
   return (
-    <div className="fixed inset-0 z-[90] flex flex-col bg-surface-container-lowest text-on-surface">
+    <div className="fixed inset-0 z-[90] flex flex-col app-overlay text-on-surface">
       <header className="shrink-0 h-16 flex items-center justify-between gap-4 px-4 sm:px-6 border-b border-white/10 bg-surface-container-low">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="material-symbols-outlined text-secondary">edit_note</span>
+          <Icon name="edit_note" className="text-secondary" />
           <div className="min-w-0">
             <p className="text-[12px] font-semibold tracking-[0.08em] uppercase text-secondary">
               Edit mode
@@ -464,7 +474,7 @@ export default function LiveEditWorkspace({
             onClick={() => setConfirmDiscard(true)}
             className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg border border-white/10 text-on-surface-variant hover:bg-white/5 text-xs font-semibold disabled:opacity-40"
           >
-            <span className="material-symbols-outlined text-[16px]">undo</span>
+            <Icon name="undo" className="text-[16px]" />
             Discard
           </button>
           <button
@@ -473,9 +483,7 @@ export default function LiveEditWorkspace({
             onClick={() => void save()}
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-on-primary hover:brightness-110 text-xs font-semibold disabled:opacity-40"
           >
-            <span className="material-symbols-outlined text-[16px]">
-              {saving ? "progress_activity" : "save"}
-            </span>
+            <Icon name={saving ? "progress_activity" : "save"} className="text-[16px]" />
             {saving ? "Saving…" : "Save"}
           </button>
           <button
@@ -483,7 +491,7 @@ export default function LiveEditWorkspace({
             onClick={requestClose}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-surface-container-high border border-white/10 hover:bg-white/5 text-xs font-semibold"
           >
-            <span className="material-symbols-outlined text-[16px]">close</span>
+            <Icon name="close" className="text-[16px]" />
             Done
           </button>
         </div>
@@ -556,7 +564,9 @@ export default function LiveEditWorkspace({
                   {selectedKey === TITLE_KEY
                     ? "Title slide"
                     : editingPoint
-                      ? `Point ${pointNumber(slides, selectedSlide!.id)} · click the slide to type`
+                      ? `Point ${pointNumber(slides, selectedSlide!.id)} · ${
+                          canvasLayout ? "double-click text to edit" : "click the slide to type"
+                        }`
                       : "Space slide"}
                 </p>
                 <button
@@ -566,12 +576,21 @@ export default function LiveEditWorkspace({
                   title={dirty ? "Shows the last saved version. Save first to show your edits." : undefined}
                   className="inline-flex items-center gap-1 px-3 h-8 rounded-lg border border-primary/30 text-primary hover:bg-primary/10 text-[11px] font-semibold disabled:opacity-40"
                 >
-                  <span className="material-symbols-outlined text-[16px]">cast</span>
+                  <Icon name="cast" className="text-[16px]" />
                   {selectedCueIndex === liveIndex ? "On screen now" : "Show on screen"}
                 </button>
               </div>
 
-              {editingPoint && selectedSlide ? (
+              {canvasLayout && selectedSlide ? (
+                <SlideCanvas
+                  key={`${selectedSlide.id}:${syncNonce}`}
+                  layout={canvasLayout}
+                  stageBg={stageBg}
+                  onChange={(next) =>
+                    patchSlideDraft(selectedSlide, { content: composeSlideContent(next) })
+                  }
+                />
+              ) : editingPoint && selectedSlide ? (
                 <StagePointEditor
                   value={contentOf(selectedSlide)}
                   syncNonce={syncNonce}
@@ -583,10 +602,14 @@ export default function LiveEditWorkspace({
                 <MiniStage cue={draftCue} {...stageProps} highlight />
               )}
 
+              {/* Canvas slides size each text box in the canvas toolbar; the
+                  sermon-wide size only applies to plain points, so showing it
+                  here (on a different S/M/L/XL scale) was contradictory. */}
+              {canvasLayout ? null : (
               <div className="rounded-xl border border-white/10 bg-surface-container-low/60 p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" title="Size of text on plain points (not canvas slides)">
                   <span className="text-[11px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                    Text size
+                    Point text size
                   </span>
                   <TextSizePicker
                     value={size}
@@ -601,7 +624,7 @@ export default function LiveEditWorkspace({
                     }}
                   />
                 </div>
-                {editingPoint && selectedSlide ? (
+                {editingPoint && selectedSlide && !canvasLayout ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -612,7 +635,7 @@ export default function LiveEditWorkspace({
                     }}
                     className="inline-flex items-center gap-1 px-3 h-8 rounded-lg border border-white/10 hover:bg-white/5 text-[11px] font-semibold"
                   >
-                    <span className="material-symbols-outlined text-[16px]">space_bar</span>
+                    <Icon name="space_bar" className="text-[16px]" />
                     Add space
                   </button>
                 ) : null}
@@ -641,6 +664,7 @@ export default function LiveEditWorkspace({
                   </p>
                 ) : null}
               </div>
+              )}
             </div>
           ) : null}
         </main>
@@ -687,7 +711,7 @@ export default function LiveEditWorkspace({
               onClick={onPrev}
               className="flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 hover:bg-white/5 text-xs font-semibold disabled:opacity-40"
             >
-              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+              <Icon name="arrow_back" className="text-[18px]" />
               Previous
             </button>
             <button
@@ -697,7 +721,7 @@ export default function LiveEditWorkspace({
               className="flex items-center justify-center gap-1 p-3 rounded-xl bg-primary text-on-primary hover:brightness-110 text-xs font-semibold disabled:opacity-40"
             >
               Next
-              <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+              <Icon name="arrow_forward" className="text-[18px]" />
             </button>
           </div>
           <p className="text-[10px] text-on-surface-variant">
@@ -730,7 +754,7 @@ export default function LiveEditWorkspace({
           onClick={onPrev}
           className="flex-1 flex items-center justify-center gap-1 p-3 rounded-xl border border-white/10 text-xs font-semibold disabled:opacity-40"
         >
-          <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+          <Icon name="arrow_back" className="text-[18px]" />
           Previous
         </button>
         <span className="text-[11px] text-on-surface-variant tabular-nums px-2">
@@ -743,7 +767,7 @@ export default function LiveEditWorkspace({
           className="flex-1 flex items-center justify-center gap-1 p-3 rounded-xl bg-primary text-on-primary text-xs font-semibold disabled:opacity-40"
         >
           Next
-          <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+          <Icon name="arrow_forward" className="text-[18px]" />
         </button>
       </div>
 

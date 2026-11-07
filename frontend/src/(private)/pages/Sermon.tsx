@@ -1,18 +1,39 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import ConfirmDialog from "../../components/modals/ConfirmDialog";
 import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
-import { PageSkeleton } from "../../components/Skeleton";
+import { Skeleton } from "../../components/Skeleton";
 import TextSizePicker from "../../components/TextSizePicker";
 import ChurchSharePicker from "../../components/ChurchSharePicker";
 import { LoadMoreBar } from "../../components/LoadMoreBar";
 import {
-  ScaledStage,
-  SlideRow,
-  StagePointEditor,
-  StageTitleEditor,
-  ToolButton,
-} from "../../components/StageEditor";
+  Badge,
+  Button,
+  EmptyState,
+  IconButton,
+  Kbd,
+  PageHeader,
+  RowMenu,
+  SearchField,
+  SectionLabel,
+  ViewTabs,
+} from "../../components/ui";
+import {
+  PointList,
+  PropField,
+  StagePreview,
+  propInputClass,
+  sermonPointNumber,
+  type DraftSlide,
+} from "../../components/sermon/SermonEditorParts";
+import { newBoxElement, newTextElement } from "../../components/sermon/SlideCanvas";
+import {
+  composeSlideContent,
+  layoutPlainText,
+  readSlideLayout,
+  stripSlideLayout,
+  type SlideLayout,
+} from "../../components/sermon/slideLayout";
 import {
   createSermon,
   deleteSermon,
@@ -33,18 +54,18 @@ import {
   DEFAULT_SERMON_TEXT_SIZE,
   SERMON_SPACE,
   formatDuration,
-  formatRelative,
   insertSermonGap,
   isSermonSpace,
   isTypingTarget,
   moveItem,
   parseDurationSeconds,
   requireChurchId,
+  sermonDisplayLines,
+  sermonSizePx,
 } from "../../lib/helpers";
-import { sermonPlainText } from "../../lib/sermonMarkup";
+import { parseSermonRuns, sermonPlainText } from "../../lib/sermonMarkup";
 import {
   asStageBackground,
-  stageUsesDarkText,
   type StageBackgroundId,
 } from "../../lib/stageBackgrounds";
 import { useSearch } from "../../lib/SearchContext";
@@ -52,25 +73,97 @@ import { usePageActive } from "../../lib/PageActiveContext";
 import { usePrefs } from "../../lib/PrefsContext";
 import { useToast } from "../../lib/ToastContext";
 import { reloadChurchCatalog } from "../../lib/offline/sync";
-import { PAGE_SIZE, type Sermon } from "../../lib/types";
-
-type DraftSlide = {
-  id: string;
-  content: string;
-  verse: string;
-};
-
-function sermonPointNumber(slides: DraftSlide[], id: string) {
-  let point = 0;
-  for (const row of slides) {
-    if (isSermonSpace(row.content)) continue;
-    point += 1;
-    if (row.id === id) return point;
-  }
-  return Math.max(1, point);
-}
+import { PAGE_SIZE, type LiveCue, type Sermon } from "../../lib/types";
+import { AutoGrowText } from "../../components/StageEditor";
+import LibraryTable, { LibraryTile } from "../../components/LibraryTable";
+import { SermonInsights } from "../../components/library/LibraryInsights";
+import { InsightsStripSkeleton } from "../../components/library/InsightsStrip";
+import Icon from "../../components/Icon";
 
 const TITLE_KEY = "title";
+
+function escapeMarkup(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function SermonRowsSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <ul aria-hidden>
+      {Array.from({ length: rows }, (_, i) => (
+        <li key={i} className="flex items-center gap-4 h-11 pl-6 pr-4 border-b border-[color:var(--mc-hairline)]">
+          <span className="flex-1 min-w-0 space-y-1.5">
+            <Skeleton className="h-3 w-56 max-w-full rounded" />
+            <Skeleton className="h-2.5 w-36 max-w-full rounded" />
+          </span>
+          <Skeleton className="hidden lg:block h-2.5 w-24 rounded" />
+          <Skeleton className="h-2.5 w-20 rounded" />
+          <Skeleton className="h-2.5 w-10 rounded" />
+          <Skeleton className="h-4 w-12 rounded-md" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SermonListSkeleton() {
+  return (
+    <section className="h-full flex flex-col bg-surface" aria-busy="true">
+      <div className="shrink-0 border-b border-[color:var(--mc-hairline)]">
+        <div className="flex items-center gap-3 px-6 h-14">
+          <Skeleton className="h-4 w-24 rounded" />
+          <Skeleton className="h-3 w-16 rounded" />
+          <Skeleton className="ml-auto h-8 w-32 rounded-lg" />
+        </div>
+        <div className="flex items-center gap-2 px-6 pb-3">
+          <Skeleton className="h-8 w-36 rounded-lg" />
+          <Skeleton className="ml-auto h-8 w-64 rounded-lg" />
+        </div>
+      </div>
+      <div className="px-4 sm:px-6 pt-4">
+        <InsightsStripSkeleton id="sermons" cards={3} className="mb-4" />
+        <div className="rounded-xl border border-white/5 overflow-hidden">
+          <div className="h-9 bg-surface-container-high border-b border-white/5" />
+          <SermonRowsSkeleton />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SermonEditorSkeleton() {
+  return (
+    <section className="h-full flex flex-col bg-surface" aria-busy="true">
+      <div className="shrink-0 flex items-center gap-3 px-6 h-14 border-b border-[color:var(--mc-hairline)]">
+        <Skeleton className="h-3.5 w-16 rounded" />
+        <Skeleton className="h-4 w-48 rounded" />
+        <Skeleton className="ml-auto h-8 w-20 rounded-lg" />
+      </div>
+      <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-w-0">
+          <div className="max-w-[760px] mx-auto px-6 pt-8 space-y-4">
+            <Skeleton className="h-2.5 w-20 rounded" />
+            <Skeleton className="h-8 w-80 max-w-full rounded" />
+            <div className="grid grid-cols-2 gap-x-8 gap-y-3 pt-4">
+              {Array.from({ length: 6 }, (_, i) => (
+                <Skeleton key={i} className="h-6 rounded" />
+              ))}
+            </div>
+            <div className="pt-8 space-y-3">
+              {Array.from({ length: 4 }, (_, i) => (
+                <Skeleton key={i} className="h-10 rounded" />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="hidden lg:block w-[340px] xl:w-[360px] border-l border-[color:var(--mc-hairline)] p-5 space-y-3">
+          <Skeleton className="h-3 w-16 rounded" />
+          <Skeleton className="aspect-video rounded-lg" />
+          <Skeleton className="h-3 w-48 rounded" />
+        </div>
+      </div>
+    </section>
+  );
+}
 
 /** The title-slide verse lives on the first point, so it follows whichever point ends up first. */
 function carryTitleVerse(prev: DraftSlide[], next: DraftSlide[]) {
@@ -88,6 +181,32 @@ function carryTitleVerse(prev: DraftSlide[], next: DraftSlide[]) {
 
 const EMPTY_SLIDES: DraftSlide[] = [{ id: "new-1", content: "", verse: "" }];
 
+/** Local `YYYY-MM-DD` for today, to split sermons into upcoming and past. */
+function todayKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+function formatServiceDate(value: string | null | undefined) {
+  if (!value) return "";
+  const [y, m, d] = value.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return value;
+  const date = new Date(y, m - 1, d);
+  const sameYear = y === new Date().getFullYear();
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
+
+function statusLabel(status: string | null | undefined) {
+  return status === "ready" ? "Ready" : "Draft";
+}
+
 function sermonDraftKey(input: {
   title: string;
   scripture: string;
@@ -98,6 +217,7 @@ function sermonDraftKey(input: {
   slides: DraftSlide[];
   notes: string[];
   textSize: string;
+  status: string;
 }) {
   return JSON.stringify(input);
 }
@@ -119,6 +239,8 @@ export default function Sermon() {
     { id: "new-1", content: "", verse: "" },
   ]);
   const [notes, setNotes] = useState<string[]>([]);
+  const [status, setStatus] = useState("ready");
+  const [filter, setFilter] = useState("");
   const [library, setLibrary] = useState<Sermon[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
@@ -144,7 +266,13 @@ export default function Sermon() {
   const [selectedKey, setSelectedKey] = useState(TITLE_KEY);
   const [syncNonce, setSyncNonce] = useState(0);
   const [focusKey, setFocusKey] = useState<string | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [opening, setOpening] = useState(false);
+  const [canvasStart, setCanvasStart] = useState<{
+    slideId: string;
+    id: string;
+    edit: boolean;
+  } | null>(null);
   const [stageBg, setStageBg] = useState<StageBackgroundId>("sanctuary");
   const [baseline, setBaseline] = useState<string | null>(null);
   const lastAutoSlide = useRef("");
@@ -163,23 +291,25 @@ export default function Sermon() {
       .catch(() => undefined);
   }, []);
 
+  const searchText = (filter.trim() || query.trim());
   const visibleLibrary = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = searchText.toLowerCase();
     if (!q) return library;
     return library.filter((row) =>
       [row.title, row.primary_scripture, row.speaker_name, row.series_name].some(
         (value) => (value ?? "").toLowerCase().includes(q),
       ),
     );
-  }, [library, query]);
+  }, [library, searchText]);
 
   const applySermon = (sermon: Sermon, keepSelection = false) => {
     const nextSlides =
       (sermon.slides ?? []).length
         ? (sermon.slides ?? []).map((slide) => ({
             id: slide.id,
-            content: slide.content,
+            content: stripSlideLayout(slide.content),
             verse: slide.scripture_reference ?? "",
+            layout: readSlideLayout(slide.content),
           }))
         : EMPTY_SLIDES;
     const nextNotes = (sermon.notes ?? []).map((note) => note.content);
@@ -187,6 +317,7 @@ export default function Sermon() {
       ? formatDuration(sermon.est_duration_seconds)
       : "";
     const nextSize = sermon.text_size || DEFAULT_SERMON_TEXT_SIZE;
+    const nextStatus = sermon.status || "draft";
     setSermonId(sermon.id);
     setTitle(sermon.title);
     setScripture(sermon.primary_scripture ?? "");
@@ -200,6 +331,7 @@ export default function Sermon() {
     setSlides(nextSlides);
     setNotes(nextNotes);
     setTextSize(nextSize);
+    setStatus(nextStatus);
     setChurchIds(
       sermon.share_church_ids?.length
         ? sermon.share_church_ids
@@ -223,6 +355,7 @@ export default function Sermon() {
         slides: nextSlides,
         notes: nextNotes,
         textSize: nextSize,
+        status: nextStatus,
       }),
     );
   };
@@ -241,10 +374,10 @@ export default function Sermon() {
     setSlides([{ id: "new-1", content: "", verse: "" }]);
     setNotes([]);
     setTextSize(DEFAULT_SERMON_TEXT_SIZE);
+    setStatus("ready");
     setChurchIds(viewChurchId ? [viewChurchId] : []);
     lastAutoSlide.current = "";
     selectSlide(TITLE_KEY);
-    setDetailsOpen(false);
     setBaseline(
       sermonDraftKey({
         title: "",
@@ -256,15 +389,21 @@ export default function Sermon() {
         slides: [{ id: "new-1", content: "", verse: "" }],
         notes: [],
         textSize: DEFAULT_SERMON_TEXT_SIZE,
+        status: "ready",
       }),
     );
     setSearchParams({ sermon: "new" }, { replace: true });
   };
 
   const openSermon = async (id: string) => {
-    const row = await getSermon(id, { fresh: true });
-    applySermon(row);
-    setSearchParams({ sermon: id });
+    setOpening(true);
+    try {
+      const row = await getSermon(id, { fresh: true });
+      applySermon(row);
+      setSearchParams({ sermon: id });
+    } finally {
+      setOpening(false);
+    }
   };
 
   const confirmDeleteSermon = async () => {
@@ -468,11 +607,11 @@ export default function Sermon() {
         series_name: series || null,
         service_date: date || null,
         est_duration_seconds: parseDurationSeconds(duration),
-        status: "ready",
+        status,
         text_size: textSize,
         slides: slides.map((slide) => ({
           id: slide.id.startsWith("new-") ? undefined : slide.id,
-          content: slide.content,
+          content: slide.layout ? composeSlideContent(slide.layout) : slide.content,
           scripture_reference: slide.verse,
         })),
         notes: notes.map((content) => ({ content })),
@@ -515,6 +654,7 @@ export default function Sermon() {
       slides,
       notes,
       textSize,
+      status,
     }) !== baseline;
   const draft = useUnsavedDraft(dirty, {
     enabled: editorOpen,
@@ -547,111 +687,102 @@ export default function Sermon() {
   });
 
   if (loading && !searchParams.get("sermon") && library.length === 0) {
-    return <PageSkeleton />;
+    return <SermonListSkeleton />;
   }
 
   const selectedParam = searchParams.get("sermon");
   const showList = !selectedParam;
 
+  const reportError = (fallback: string) => (err: unknown) => {
+    const message = err instanceof Error ? err.message : fallback;
+    setError(message);
+    toast.error(message);
+  };
+
+  const switchArchive = (archived: boolean) => {
+    if (archived === showArchive) return;
+    setShowArchive(archived);
+    void loadSermonPage(viewChurchId, superadmin, 0, false, archived).catch(
+      reportError(t("sermons.loadError")),
+    );
+  };
+
+  const openFromList = (id: string) => {
+    void openSermon(id).catch(reportError("Could not open sermon."));
+  };
+
+  const setArchived = (id: string, archived: boolean) => {
+    void setSermonArchived(id, archived)
+      .then(() => loadSermonPage(viewChurchId, superadmin, 0, false, showArchive))
+      .then(() => toast.success(archived ? "Sermon archived." : t("sermons.restored")))
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : t("sermons.loadError"));
+      });
+  };
+
+  const deleteDialog = (
+    <ConfirmDialog
+      open={Boolean(deletingSermon)}
+      title="Delete Sermon?"
+      description={`Are you sure you want to delete "${deletingSermon?.title ?? ""}"? This action cannot be undone.`}
+      highlight={deletingSermon ? `"${deletingSermon.title}"` : undefined}
+      onClose={() => setDeletingSermon(null)}
+      onConfirm={() => confirmDeleteSermon()}
+    />
+  );
+
   if (showList) {
+    const today = todayKey();
+    const upcoming = visibleLibrary
+      .filter((row) => row.service_date && row.service_date.slice(0, 10) >= today)
+      .sort((a, b) => (a.service_date ?? "").localeCompare(b.service_date ?? ""));
+    const past = visibleLibrary
+      .filter((row) => row.service_date && row.service_date.slice(0, 10) < today)
+      .sort((a, b) => (b.service_date ?? "").localeCompare(a.service_date ?? ""));
+    const undated = visibleLibrary.filter((row) => !row.service_date);
+    const groups = [
+      { label: "Upcoming", rows: upcoming },
+      { label: "Past", rows: past },
+      { label: "Undated", rows: undated },
+    ].filter((group) => group.rows.length);
+
     return (
-      <section className="h-full overflow-y-auto custom-scrollbar bg-surface-container-lowest p-4 sm:p-6 lg:p-8">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-8">
-            <div>
-              <nav className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant mb-2">
-                <Link
-                  to="/songs"
-                  className="hover:text-primary hover:underline underline-offset-4"
-                >
-                  {t("sermons.library")}
-                </Link>
-                <span className="material-symbols-outlined text-sm">chevron_right</span>
-                <span className="text-primary">{t("sermons.title")}</span>
-              </nav>
-              <h2 className="text-[clamp(1.75rem,3vw,2rem)] font-semibold tracking-[-0.01em] text-on-surface">
-                {t("sermons.title")}
-              </h2>
-              <p className="text-on-surface-variant text-sm mt-2">
-                {total === 1
-                  ? t("sermons.count", { n: total })
-                  : t("sermons.countMany", { n: total })}
-              </p>
-              <div className="mt-4 flex p-1 bg-surface-container-high rounded-full border border-white/5 w-fit">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!showArchive) return;
-                    setShowArchive(false);
-                    void loadSermonPage(
-                      viewChurchId,
-                      superadmin,
-                      0,
-                      false,
-                      false,
-                    ).catch((err) => {
-                      const message =
-                        err instanceof Error
-                          ? err.message
-                          : t("sermons.loadError");
-                      setError(message);
-                      toast.error(message);
-                    });
-                  }}
-                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                    !showArchive
-                      ? "bg-primary text-on-primary shadow-lg"
-                      : "text-on-surface-variant hover:text-on-surface"
-                  }`}
-                >
-                  {t("common.active")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (showArchive) return;
-                    setShowArchive(true);
-                    void loadSermonPage(
-                      viewChurchId,
-                      superadmin,
-                      0,
-                      false,
-                      true,
-                    ).catch((err) => {
-                      const message =
-                        err instanceof Error
-                          ? err.message
-                          : t("sermons.loadError");
-                      setError(message);
-                      toast.error(message);
-                    });
-                  }}
-                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-all ${
-                    showArchive
-                      ? "bg-primary text-on-primary shadow-lg"
-                      : "text-on-surface-variant hover:text-on-surface"
-                  }`}
-                >
-                  {t("common.archive")}
-                </button>
-              </div>
+      <section className="h-full flex flex-col bg-surface text-on-surface">
+        <PageHeader
+          title={t("sermons.title")}
+          meta={
+            total === 1
+              ? t("sermons.count", { n: total })
+              : t("sermons.countMany", { n: total })
+          }
+          actions={
+            <Button variant="primary" icon="add" onClick={startNew}>
+              {t("sermons.new")}
+            </Button>
+          }
+          toolbar={
+            <>
+              <ViewTabs
+                label="Sermon list"
+                value={showArchive ? "archive" : "active"}
+                onChange={(next) => switchArchive(next === "archive")}
+                tabs={[
+                  { id: "active", label: t("common.active") },
+                  { id: "archive", label: t("common.archive") },
+                ]}
+              />
               {superadmin ? (
-                <label className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2 max-w-xl">
-                  <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">
-                    {t("sermons.viewingChurch")}
-                  </span>
+                <label className="flex items-center gap-2">
+                  <span className="sr-only">{t("sermons.viewingChurch")}</span>
                   <select
+                    aria-label={t("sermons.viewingChurch")}
                     value={viewChurchId}
                     onChange={(event) => {
-                      const next = event.target.value;
-                      void switchViewChurch(next).catch((err) => {
-                        const message =
-                          err instanceof Error ? err.message : t("sermons.loadError");
-                        setError(message);
-                        toast.error(message);
-                      });
+                      void switchViewChurch(event.target.value).catch(
+                        reportError(t("sermons.loadError")),
+                      );
                     }}
-                    className="bg-surface-container border border-white/10 rounded-lg px-3 py-2 text-sm min-w-[240px]"
+                    className="ui-input !h-8 !w-auto min-w-[200px]"
                   >
                     <option value="">{t("common.selectChurch")}</option>
                     {churches.map((row) => (
@@ -662,153 +793,179 @@ export default function Sermon() {
                   </select>
                 </label>
               ) : null}
-            </div>
-            <button
-              type="button"
-              onClick={startNew}
-              className="flex items-center gap-2 bg-gradient-to-r from-primary-container to-secondary-container text-white px-6 py-2.5 rounded-full text-xs font-semibold hover:opacity-90 active:scale-95 transition-transform self-start sm:self-auto"
-            >
-              <span className="material-symbols-outlined text-[20px]">add</span>
-              {t("sermons.new")}
-            </button>
+              <SearchField
+                value={filter}
+                onChange={setFilter}
+                placeholder="Search sermons"
+                className="ml-auto w-64"
+              />
+            </>
+          }
+        />
+
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+          {error ? <p className="px-6 pt-3 text-[13px] text-error">{error}</p> : null}
+
+          <div className="px-4 sm:px-6 pt-4">
+            <SermonInsights
+              viewChurchId={superadmin ? viewChurchId : null}
+              version={library}
+            />
           </div>
 
-          {error ? <p className="mb-6 text-sm text-[#ffb4ab]">{error}</p> : null}
-
           {visibleLibrary.length === 0 ? (
-            <p className="text-sm text-on-surface-variant">
-              {query.trim()
-                ? t("sermons.emptyQuery", { q: query.trim() })
-                : showArchive
-                  ? t("sermons.emptyArchive")
-                  : t("sermons.empty")}
-            </p>
+            <EmptyState
+              icon={searchText ? "search" : "menu_book"}
+              title={
+                searchText
+                  ? t("sermons.emptyQuery", { q: searchText })
+                  : showArchive
+                    ? t("sermons.emptyArchive")
+                    : t("sermons.empty")
+              }
+              action={
+                !searchText && !showArchive ? (
+                  <Button variant="secondary" icon="add" onClick={startNew}>
+                    {t("sermons.new")}
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {visibleLibrary.map((row) => (
-                <div
-                  key={row.id}
-                  className="glass-panel rounded-xl p-5 text-left hover:border-primary/30 transition-colors border border-white/5 group relative"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void openSermon(row.id).catch((err) => {
-                        const message =
-                          err instanceof Error
-                            ? err.message
-                            : "Could not open sermon.";
-                        setError(message);
-                        toast.error(message);
-                      });
-                    }}
-                    className="w-full text-left pr-10"
-                  >
-                    <p className="text-lg font-semibold text-on-surface break-words whitespace-pre-wrap">
-                      {row.title}
-                    </p>
-                    <p className="text-sm text-on-surface-variant truncate mt-1">
-                      {[row.primary_scripture, row.speaker_name, row.series_name]
-                        .filter(Boolean)
-                        .join(" • ") || t("sermons.draft")}
-                    </p>
-                    <p className="text-[11px] text-on-surface-variant/70 mt-3">
-                      {t("sermons.updatedAgo", {
-                        when: formatRelative(row.updated_at),
-                      })}
-                      {row.est_duration_seconds
-                        ? ` · ${formatDuration(row.est_duration_seconds)}`
-                        : ""}
-                    </p>
-                  </button>
-                  {showArchive ? (
-                    <button
-                      type="button"
-                      title={t("common.restore")}
-                      onClick={() => {
-                        void setSermonArchived(row.id, false)
-                          .then(() =>
-                            loadSermonPage(
-                              viewChurchId,
-                              superadmin,
-                              0,
-                              false,
-                              true,
-                            ),
-                          )
-                          .then(() => toast.success(t("sermons.restored")))
-                          .catch((err) => {
-                            toast.error(
-                              err instanceof Error
-                                ? err.message
-                                : t("sermons.loadError"),
-                            );
-                          });
-                      }}
-                      className="absolute top-4 right-4 p-1.5 rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10"
-                    >
-                      <span className="material-symbols-outlined text-[20px]">
-                        unarchive
-                      </span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setDeletingSermon({ id: row.id, title: row.title })
-                      }
-                      className="absolute top-4 right-4 p-1.5 rounded-lg text-on-surface-variant hover:text-error hover:bg-error/10"
-                      aria-label={`Delete ${row.title}`}
-                    >
-                      <span className="material-symbols-outlined text-[20px]">
-                        delete
-                      </span>
-                    </button>
-                  )}
-                </div>
-              ))}
+            <div className="pb-6">
+              <div className="px-4 sm:px-6 flex flex-col">
+                <LibraryTable
+                  ariaLabel="Sermons"
+                  columns={[
+                    { key: "title", header: "Title" },
+                    { key: "speaker", header: "Speaker", hideBelow: "md" },
+                    { key: "scripture", header: "Scripture", hideBelow: "lg" },
+                    { key: "date", header: "Date", align: "right" },
+                    { key: "length", header: "Length", align: "right", hideBelow: "sm" },
+                    { key: "status", header: "Status", align: "right" },
+                  ]}
+                  groups={groups.map((group) => ({
+                    id: group.label,
+                    label: group.label,
+                    rows: group.rows.map((row) => {
+                      const subtitle =
+                        [row.primary_scripture, row.speaker_name].filter(Boolean).join(" · ") ||
+                        t("sermons.draft");
+                      return {
+                        id: row.id,
+                        label: `${row.title} ${subtitle}`,
+                        onOpen: () => openFromList(row.id),
+                        leading: (
+                          <LibraryTile>
+                            <Icon name="menu_book" className="text-[18px]" />
+                          </LibraryTile>
+                        ),
+                        cells: {
+                          title: (
+                            <span className="block truncate">
+                              {row.title}
+                              {row.series_name ? (
+                                <span className="ml-2 font-normal text-[12px] text-on-surface-variant">
+                                  {row.series_name}
+                                </span>
+                              ) : null}
+                            </span>
+                          ),
+                          speaker: row.speaker_name || "—",
+                          scripture: row.primary_scripture || "—",
+                          date: (
+                            <span className="tabular-nums whitespace-nowrap">
+                              {formatServiceDate(row.service_date) || "—"}
+                            </span>
+                          ),
+                          length: (
+                            <span className="tabular-nums">
+                              {row.est_duration_seconds
+                                ? formatDuration(row.est_duration_seconds)
+                                : "—"}
+                            </span>
+                          ),
+                          status: (
+                            <Badge tone={row.status === "ready" ? "success" : "neutral"}>
+                              {statusLabel(row.status)}
+                            </Badge>
+                          ),
+                        },
+                        actions: (
+                          <RowMenu
+                            label={`More actions for ${row.title}`}
+                            items={[
+                              {
+                                label: "Open",
+                                icon: "open_in_new",
+                                onSelect: () => openFromList(row.id),
+                              },
+                              showArchive
+                                ? {
+                                    label: t("common.restore"),
+                                    icon: "unarchive",
+                                    onSelect: () => setArchived(row.id, false),
+                                  }
+                                : {
+                                    label: t("common.archive"),
+                                    icon: "archive",
+                                    onSelect: () => setArchived(row.id, true),
+                                  },
+                              {
+                                label: "Delete",
+                                icon: "delete",
+                                danger: true,
+                                onSelect: () =>
+                                  setDeletingSermon({ id: row.id, title: row.title }),
+                              },
+                            ]}
+                          />
+                        ),
+                      };
+                    }),
+                  }))}
+                />
+              </div>
+              {loadingMore ? <SermonRowsSkeleton rows={3} /> : null}
+              <div className={`px-6 ${loadingMore ? "hidden" : ""}`}>
+                <LoadMoreBar
+                  shown={library.length}
+                  total={total}
+                  hasMore={library.length < total}
+                  loading={loadingMore}
+                  onMore={() => {
+                    setLoadingMore(true);
+                    void listSermons({
+                      limit: PAGE_SIZE,
+                      offset: library.length,
+                      viewChurchId: superadmin ? viewChurchId : null,
+                      query: searchText || undefined,
+                      archived: showArchive,
+                    })
+                      .then((page) => {
+                        setLibrary((prev) => [...prev, ...page.items]);
+                        setTotal(page.total);
+                      })
+                      .catch(reportError(t("sermons.loadError")))
+                      .finally(() => setLoadingMore(false));
+                  }}
+                />
+              </div>
             </div>
           )}
-          <LoadMoreBar
-            shown={library.length}
-            total={total}
-            hasMore={library.length < total}
-            loading={loadingMore}
-            onMore={() => {
-              setLoadingMore(true);
-              void listSermons({
-                limit: PAGE_SIZE,
-                offset: library.length,
-                viewChurchId: superadmin ? viewChurchId : null,
-                query: query.trim() || undefined,
-                archived: showArchive,
-              })
-                .then((page) => {
-                  setLibrary((prev) => [...prev, ...page.items]);
-                  setTotal(page.total);
-                })
-                .catch((err) => {
-                  const message =
-                    err instanceof Error ? err.message : t("sermons.loadError");
-                  setError(message);
-                  toast.error(message);
-                })
-                .finally(() => setLoadingMore(false));
-            }}
-          />
         </div>
 
-        <ConfirmDialog
-          open={Boolean(deletingSermon)}
-          title="Delete Sermon?"
-          description={`Are you sure you want to delete "${deletingSermon?.title ?? ""}"? This action cannot be undone.`}
-          highlight={deletingSermon ? `"${deletingSermon.title}"` : undefined}
-          onClose={() => setDeletingSermon(null)}
-          onConfirm={() => confirmDeleteSermon()}
-        />
+        {deleteDialog}
         {draft.dialog}
       </section>
     );
+  }
+
+  if (
+    opening ||
+    (selectedParam && selectedParam !== "new" && selectedParam !== sermonId)
+  ) {
+    return <SermonEditorSkeleton />;
   }
 
   const deletingSlide = slides.find((slide) => slide.id === deleteSlideId);
@@ -816,13 +973,14 @@ export default function Sermon() {
     selectedKey === TITLE_KEY
       ? undefined
       : slides.find((row) => row.id === selectedKey);
-  const selectedIndex = selectedSlide ? slides.indexOf(selectedSlide) : -1;
   const titleHolder = slides.find((row) => !isSermonSpace(row.content));
-  const editingPoint = Boolean(selectedSlide && !isSermonSpace(selectedSlide.content));
   const projectedCount =
     1 +
     slides.filter(
-      (row) => isSermonSpace(row.content) || sermonPlainText(row.content).trim(),
+      (row) =>
+        isSermonSpace(row.content) ||
+        Boolean(row.layout?.els.length) ||
+        sermonPlainText(row.content).trim(),
     ).length;
 
   const patchSlide = (id: string, patch: Partial<DraftSlide>) =>
@@ -830,12 +988,13 @@ export default function Sermon() {
       prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     );
 
-  const insertSlide = (content: string) => {
+  /** Inserts after `afterKey` (title = at the top), or at the end when omitted. */
+  const insertSlide = (content: string, afterKey?: string) => {
     const id = `new-${Date.now()}`;
     setSlides((prev) => {
-      const index = prev.findIndex((row) => row.id === selectedKey);
+      const index = afterKey ? prev.findIndex((row) => row.id === afterKey) : -1;
       const at =
-        selectedKey === TITLE_KEY ? 0 : index >= 0 ? index + 1 : prev.length;
+        afterKey === TITLE_KEY ? 0 : index >= 0 ? index + 1 : prev.length;
       const next = [
         ...prev.slice(0, at),
         { id, content, verse: "" },
@@ -846,12 +1005,12 @@ export default function Sermon() {
     selectSlide(id, !isSermonSpace(content));
   };
 
-  const moveSlide = (delta: number) => {
-    const to = selectedIndex + delta;
-    if (selectedIndex < 0 || to < 0 || to >= slides.length) return;
-    setSlides((prev) =>
-      carryTitleVerse(prev, moveItem(prev, selectedIndex, to)),
-    );
+  const moveSlide = (id: string, delta: number) => {
+    const from = slides.findIndex((row) => row.id === id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= slides.length) return;
+    setSlides((prev) => carryTitleVerse(prev, moveItem(prev, from, to)));
+    selectSlide(id);
   };
 
   const removeSlide = (id: string) => {
@@ -864,352 +1023,404 @@ export default function Sermon() {
     selectSlide(index > 0 ? next[index - 1].id : TITLE_KEY);
   };
 
+  /** Turns a plain point into a canvas slide: its text becomes a box, then a new text box or shape is added. */
+  const designSlide = (id: string, kind: "text" | "box") => {
+    const row = slides.find((slide) => slide.id === id);
+    if (!row) return;
+    const els: SlideLayout["els"] = row.layout ? [...row.layout.els] : [];
+    if (!row.layout) {
+      const existing = parseSermonRuns(row.content)
+        .map((run) => run.text)
+        .join("")
+        .trim();
+      if (existing) {
+        els.push({
+          ...newTextElement(existing, sermonSizePx(textSize)),
+          x: 5,
+          y: 6,
+          w: 90,
+          h: 40,
+          align: "left",
+        });
+      }
+    }
+    const added = kind === "text" ? newTextElement() : newBoxElement();
+    const nextEls = kind === "box" ? [added, ...els] : [...els, added];
+    patchSlide(id, { layout: { v: 1, els: nextEls } });
+    setCanvasStart({ slideId: id, id: added.id, edit: kind === "text" });
+    if (selectedKey !== id) selectSlide(id);
+  };
+
   const requestDelete = (slide: DraftSlide) => {
-    if (isSermonSpace(slide.content) || !sermonPlainText(slide.content).trim()) {
+    const empty = slide.layout
+      ? !slide.layout.els.length
+      : !sermonPlainText(slide.content).trim();
+    if (isSermonSpace(slide.content) || empty) {
       removeSlide(slide.id);
     } else {
       setDeleteSlideId(slide.id);
     }
   };
 
-  const fieldClass =
-    "w-full bg-surface-container-lowest border border-white/10 rounded-lg py-2.5 px-3 text-sm focus:border-primary focus:outline-none";
-  const fieldLabel =
-    "block text-[11px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant mb-1.5";
+  const titleVerse = titleHolder?.verse.trim() || scripture.trim();
+  const previewCue: LiveCue = !selectedSlide
+    ? {
+        id: "preview-title",
+        itemId: "preview",
+        kind: "sermon",
+        label: "TITLE",
+        tag: "TTL",
+        title: title.trim(),
+        preview: title.trim(),
+        lines: [title.trim() || "Untitled sermon"],
+        heading: null,
+        align: "center",
+        textSize,
+        verse: titleVerse || null,
+        versePlacement: titleVerse ? "bottom" : undefined,
+        titleSlide: true,
+      }
+    : isSermonSpace(selectedSlide.content)
+      ? {
+          id: selectedSlide.id,
+          itemId: "preview",
+          kind: "sermon",
+          label: "BLANK",
+          tag: "BLK",
+          title: title.trim(),
+          preview: "",
+          lines: [],
+          heading: null,
+          blank: true,
+        }
+      : (() => {
+          const lines = selectedSlide.layout
+            ? [composeSlideContent(selectedSlide.layout)]
+            : sermonDisplayLines(selectedSlide.content);
+          return {
+            id: selectedSlide.id,
+            itemId: "preview",
+            kind: "sermon" as const,
+            label: "POINT",
+            tag: "P",
+            title: title.trim(),
+            preview: sermonPlainText(selectedSlide.content).slice(0, 80),
+            lines: lines.length ? lines : [""],
+            heading: null,
+            slideId: selectedSlide.id,
+            align: "start" as const,
+            textSize,
+          };
+        })();
+  const previewLabel = !selectedSlide
+    ? "Title slide"
+    : isSermonSpace(selectedSlide.content)
+      ? "Blank slide"
+      : `Point ${sermonPointNumber(slides, selectedSlide.id)}`;
+  const sermonName = title.trim() || "Untitled sermon";
+  const saveState = dirty ? "Unsaved changes" : sermonId ? "All changes saved" : "Not saved yet";
 
   return (
-    <section className="h-full flex flex-col bg-surface-container-lowest text-on-surface">
-      <header className="shrink-0 flex items-center justify-between gap-3 px-3 sm:px-5 py-3 border-b border-white/10 bg-surface-container-low">
-        <div className="flex items-center gap-2 min-w-0">
-          <button
-            type="button"
-            onClick={() => draft.guard(() => setSearchParams({}))}
-            className="p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-white/5"
-            aria-label={t("sermons.title")}
-            title={t("sermons.title")}
-          >
-            <span className="material-symbols-outlined">arrow_back</span>
-          </button>
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold tracking-[0.08em] uppercase text-primary">
-              {sermonId ? "Edit sermon" : "New sermon"}
-            </p>
-            <p className="text-sm font-medium truncate">
-              {title.trim() || "Untitled sermon"}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="hidden lg:inline text-[11px] text-on-surface-variant">
-            {dirty ? "Unsaved changes · ⌘S" : sermonId ? "All changes saved" : ""}
+    <section className="h-full flex flex-col bg-surface text-on-surface">
+      <PageHeader
+        crumbs={[
+          {
+            label: t("sermons.title"),
+            onClick: () => draft.guard(() => setSearchParams({})),
+          },
+        ]}
+        title={sermonName}
+        meta={
+          <span className={`flex items-center gap-1.5 ${dirty ? "text-on-surface" : ""}`}>
+            {dirty ? <span className="w-1.5 h-1.5 rounded-full bg-primary" aria-hidden /> : null}
+            {saveState}
           </span>
-          <button
-            type="button"
-            onClick={() => setDetailsOpen((open) => !open)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold ${
-              detailsOpen
-                ? "border-primary/40 bg-primary/10 text-primary"
-                : "border-white/10 text-on-surface-variant hover:bg-white/5"
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">tune</span>
-            <span className="hidden sm:inline">Details</span>
-          </button>
-          {sermonId ? (
-            <button
-              type="button"
-              onClick={() =>
-                setDeletingSermon({
-                  id: sermonId,
-                  title: title.trim() || "Untitled sermon",
-                })
-              }
-              className="p-2 rounded-lg text-on-surface-variant hover:bg-error/10 hover:text-error"
-              aria-label="Delete sermon"
+        }
+        actions={
+          <>
+            <IconButton
+              icon={detailsOpen ? "right_panel_close" : "right_panel_open"}
+              label={detailsOpen ? "Hide side panel" : "Show side panel"}
+              onClick={() => setDetailsOpen((open) => !open)}
+            />
+            {sermonId ? (
+              <RowMenu
+                label="More actions"
+                items={[
+                  {
+                    label: "Delete",
+                    icon: "delete",
+                    danger: true,
+                    onSelect: () => setDeletingSermon({ id: sermonId, title: sermonName }),
+                  },
+                ]}
+              />
+            ) : null}
+            <Button
+              variant="primary"
+              disabled={saving}
+              icon={saved && !dirty && !saving ? "check" : "save"}
+              onClick={() => void save()}
             >
-              <span className="material-symbols-outlined text-[20px]">delete</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => void save()}
-            className="flex items-center gap-1.5 px-4 sm:px-5 py-2 rounded-lg text-xs font-semibold bg-gradient-to-r from-primary-container to-secondary-container text-white shadow-lg hover:shadow-primary/20 active:scale-95 transition-all disabled:opacity-60"
-          >
-            <span className="material-symbols-outlined text-[16px]">
-              {saving ? "progress_activity" : "save"}
-            </span>
-            {saving ? "Saving…" : saved && !dirty ? "Saved" : "Save"}
-          </button>
-        </div>
-      </header>
+              {saving ? "Saving…" : saved && !dirty ? "Saved" : "Save"}
+            </Button>
+          </>
+        }
+      />
 
       {error ? (
-        <p className="shrink-0 px-5 pt-3 text-sm text-[#ffb4ab]">{error}</p>
+        <p className="shrink-0 px-6 py-2 text-[13px] text-error border-b border-[color:var(--mc-hairline)]">
+          {error}
+        </p>
       ) : null}
 
-      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-        <aside className="shrink-0 md:w-60 max-h-52 md:max-h-none border-b md:border-b-0 md:border-r border-white/10 flex flex-col min-h-0">
-          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-1">
-            <SlideRow
-              label="Title"
-              text={title.trim() || "Untitled sermon"}
-              selected={selectedKey === TITLE_KEY}
-              onClick={() => selectSlide(TITLE_KEY)}
-            />
-            {slides.map((slide) => {
-              const blank = isSermonSpace(slide.content);
-              return (
-                <SlideRow
-                  key={slide.id}
-                  label={blank ? "Blank" : `Point ${sermonPointNumber(slides, slide.id)}`}
-                  text={
-                    blank
-                      ? "Blank screen"
-                      : sermonPlainText(slide.content).trim() || "Empty point"
-                  }
-                  selected={selectedKey === slide.id}
-                  onClick={() => selectSlide(slide.id)}
-                />
-              );
-            })}
-          </div>
-          <div className="shrink-0 p-2 border-t border-white/10 grid grid-cols-5 gap-1">
-            <ToolButton icon="add" label="Add point" onClick={() => insertSlide("")} />
-            <ToolButton
-              icon="crop_landscape"
-              label="Add blank slide"
-              onClick={() => insertSlide(SERMON_SPACE)}
-            />
-            <ToolButton
-              icon="arrow_upward"
-              label="Move up"
-              disabled={selectedIndex <= 0}
-              onClick={() => moveSlide(-1)}
-            />
-            <ToolButton
-              icon="arrow_downward"
-              label="Move down"
-              disabled={selectedIndex < 0 || selectedIndex >= slides.length - 1}
-              onClick={() => moveSlide(1)}
-            />
-            <ToolButton
-              icon="delete"
-              label="Delete slide"
-              danger
-              disabled={!selectedSlide}
-              onClick={() => selectedSlide && requestDelete(selectedSlide)}
-            />
-          </div>
-        </aside>
-
-        <main className="flex-1 min-w-0 overflow-y-auto custom-scrollbar p-4 sm:p-6">
-          <div className="max-w-4xl mx-auto space-y-4">
-            <p className="text-[11px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-              {selectedKey === TITLE_KEY
-                ? "Title slide · type the title and verse on the slide"
-                : editingPoint && selectedSlide
-                  ? `Point ${sermonPointNumber(slides, selectedSlide.id)} · click the slide to type`
-                  : "Blank slide · the screen stays empty here"}
+      <div className="flex-1 min-h-0 flex">
+        <main className="flex-1 min-w-0 overflow-y-auto custom-scrollbar">
+          <div className="max-w-[760px] mx-auto px-6 pt-8 pb-24">
+            <p className="text-[12px] text-on-surface-variant">
+              {sermonId ? "Edit sermon" : "New sermon"}
             </p>
+            <div
+              className="mt-1"
+              onFocusCapture={() => {
+                if (selectedKey !== TITLE_KEY) selectSlide(TITLE_KEY);
+              }}
+            >
+              <AutoGrowText
+                value={title}
+                onChange={setTitle}
+                placeholder="Sermon title"
+                autoFocus={!sermonId && !title}
+                className="w-full text-[28px] leading-[1.25] font-semibold tracking-[-0.01em] text-on-surface placeholder:text-outline"
+                style={{}}
+              />
+            </div>
+            {titleHolder ? (
+              <input
+                value={titleHolder.verse}
+                onFocus={() => {
+                  if (selectedKey !== TITLE_KEY) selectSlide(TITLE_KEY);
+                }}
+                onChange={(event) => patchSlide(titleHolder.id, { verse: event.target.value })}
+                placeholder="Verse on the title slide (optional) · Fil 3:14"
+                aria-label="Title slide verse"
+                className="mt-2 block w-full bg-transparent border-0 outline-none p-0 text-[14px] text-on-surface-variant placeholder:text-outline"
+              />
+            ) : null}
 
-            {selectedKey === TITLE_KEY ? (
-              <StageTitleEditor
-                title={title}
-                verse={titleHolder?.verse ?? ""}
-                stageBg={stageBg}
-                onTitleChange={setTitle}
-                onVerseChange={
-                  titleHolder
-                    ? (next) => patchSlide(titleHolder.id, { verse: next })
-                    : undefined
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1">
+              <PropField label="Speaker">
+                <input
+                  className={propInputClass}
+                  placeholder="Who is preaching"
+                  value={speaker}
+                  onChange={(event) => setSpeaker(event.target.value)}
+                />
+              </PropField>
+              <PropField
+                label="Scripture"
+                hint={
+                  scriptureBusy
+                    ? <Skeleton className="h-2.5 w-40 mt-1 mb-0.5 rounded" />
+                    : scriptureHint && !scripturePreview
+                      ? scriptureHint
+                      : undefined
                 }
-                versePlaceholder="Verse (optional) · Fil 3:14"
-              />
-            ) : editingPoint && selectedSlide ? (
-              <StagePointEditor
-                value={selectedSlide.content}
-                syncNonce={syncNonce}
-                size={textSize}
-                stageBg={stageBg}
-                focusKey={focusKey}
-                placeholder="Type this point…"
-                onChange={(next) => patchSlide(selectedSlide.id, { content: next })}
-              />
-            ) : (
-              <ScaledStage stageBg={stageBg} highlight>
-                <div className="h-full w-full flex items-center justify-center">
-                  <span
-                    className={`text-[44px] uppercase tracking-[0.3em] ${
-                      stageUsesDarkText(stageBg) ? "text-black/30" : "text-white/30"
-                    }`}
-                  >
-                    Blank screen
-                  </span>
-                </div>
-              </ScaledStage>
-            )}
-
-            <div className="rounded-xl border border-white/10 bg-surface-container-low/60 p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                  Text size
-                </span>
-                <TextSizePicker value={textSize} onChange={setTextSize} />
-              </div>
-              {editingPoint && selectedSlide ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    patchSlide(selectedSlide.id, {
-                      content: insertSermonGap(selectedSlide.content),
-                    });
-                    setSyncNonce((n) => n + 1);
-                  }}
-                  className="inline-flex items-center gap-1 px-3 h-8 rounded-lg border border-white/10 hover:bg-white/5 text-[11px] font-semibold"
-                >
-                  <span className="material-symbols-outlined text-[16px]">space_bar</span>
-                  Add space
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => insertSlide("")}
-                className="inline-flex items-center gap-1 px-3 h-8 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 text-[11px] font-semibold"
               >
-                <span className="material-symbols-outlined text-[16px]">add</span>
-                {selectedKey === TITLE_KEY ? "Add first point" : "Add next point"}
-              </button>
-              <span className="ml-auto text-[11px] text-on-surface-variant">
-                {projectedCount} slide{projectedCount === 1 ? "" : "s"} will project · ↑ ↓ to move
-                between slides
+                <input
+                  className={propInputClass}
+                  placeholder="e.g. John 4:23"
+                  value={scripture}
+                  onChange={(event) => setScripture(event.target.value)}
+                />
+              </PropField>
+              <PropField label="Series">
+                <input
+                  className={propInputClass}
+                  placeholder="Series name"
+                  value={series}
+                  onChange={(event) => setSeries(event.target.value)}
+                />
+              </PropField>
+              <PropField label="Service date">
+                <input
+                  className={propInputClass}
+                  type="date"
+                  value={date}
+                  onChange={(event) => setDate(event.target.value)}
+                />
+              </PropField>
+              <PropField label="Duration">
+                <input
+                  className={`${propInputClass} tabular-nums`}
+                  placeholder="35:00"
+                  value={duration}
+                  onChange={(event) => setDuration(event.target.value)}
+                />
+              </PropField>
+              <PropField label="Status">
+                <select
+                  className={propInputClass}
+                  value={status === "ready" ? "ready" : "draft"}
+                  onChange={(event) => setStatus(event.target.value)}
+                  aria-label="Status"
+                >
+                  <option value="draft">Draft</option>
+                  <option value="ready">Ready</option>
+                </select>
+              </PropField>
+              <PropField
+                label="Point text size"
+                wide
+                hint="For text-only points. Text boxes on a canvas slide are sized in the slide toolbar."
+              >
+                <div className="py-0.5">
+                  <TextSizePicker value={textSize} onChange={setTextSize} />
+                </div>
+              </PropField>
+            </div>
+
+            <div className="mt-10 flex items-baseline justify-between gap-3 mb-2">
+              <h2 className="text-[13px] font-medium text-on-surface">Slides</h2>
+              <span className="text-[12px] text-on-surface-variant tabular-nums">
+                {projectedCount} slide{projectedCount === 1 ? "" : "s"} will project
+              </span>
+            </div>
+            <PointList
+              slides={slides}
+              selectedKey={selectedKey}
+              syncNonce={syncNonce}
+              focusKey={focusKey}
+              onSelect={(id, focus) => {
+                setCanvasStart(null);
+                selectSlide(id, focus);
+              }}
+              onChange={(id, content) => patchSlide(id, { content })}
+              onMove={moveSlide}
+              onAddSpace={(id) => {
+                const row = slides.find((slide) => slide.id === id);
+                if (!row) return;
+                patchSlide(id, { content: insertSermonGap(row.content) });
+                selectSlide(id);
+              }}
+              onInsertAfter={(id, content) => insertSlide(content, id)}
+              onDelete={requestDelete}
+              stageBg={stageBg}
+              canvasStart={canvasStart}
+              onLayoutChange={(id, layout) => patchSlide(id, { layout })}
+              onDesign={designSlide}
+              onPlainText={(id) => {
+                const row = slides.find((slide) => slide.id === id);
+                if (!row?.layout) return;
+                patchSlide(id, {
+                  content: escapeMarkup(layoutPlainText(row.layout)),
+                  layout: null,
+                });
+                selectSlide(id);
+              }}
+            />
+            <div className="mt-3 flex items-center gap-2">
+              <Button variant="ghost" size="sm" icon="add" onClick={() => insertSlide("")}>
+                Add point
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon="crop_landscape"
+                onClick={() => insertSlide(SERMON_SPACE)}
+              >
+                Add blank slide
+              </Button>
+              <span className="ml-auto hidden sm:flex items-center gap-1 text-[12px] text-on-surface-variant">
+                <Kbd>↑</Kbd>
+                <Kbd>↓</Kbd>
+                <span className="ml-1">move between slides</span>
+                <span className="mx-2 text-outline">·</span>
+                <Kbd>⌘S</Kbd>
+                <span className="ml-1">save</span>
               </span>
             </div>
           </div>
         </main>
 
         {detailsOpen ? (
-          <aside className="fixed inset-x-0 bottom-0 top-16 z-[60] md:static md:z-auto shrink-0 md:w-80 border-t md:border-t-0 md:border-l border-white/10 overflow-y-auto custom-scrollbar p-4 space-y-5 bg-surface-container-low">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary">
-                Details
-              </h3>
-              <button
-                type="button"
-                onClick={() => setDetailsOpen(false)}
-                className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-white/5"
-                aria-label="Close details"
-              >
-                <span className="material-symbols-outlined text-[18px]">close</span>
-              </button>
-            </div>
-            <p className="text-[11px] text-on-surface-variant -mt-3">
-              All optional. Only the slides are shown on screen.
-            </p>
-
-            <label className="block">
-              <span className={fieldLabel}>Main scripture</span>
-              <input
-                className={fieldClass}
-                placeholder="e.g. John 4:23"
-                value={scripture}
-                onChange={(event) => setScripture(event.target.value)}
-              />
-              <span className="mt-1.5 block text-[11px] text-on-surface-variant min-h-[1rem]">
-                {scriptureBusy
-                  ? "Looking up KJV text…"
-                  : scriptureHint || (scripturePreview ? "KJV • public domain" : "")}
-              </span>
-              {scripturePreview ? (
-                <span className="mt-1 block text-xs text-on-surface-variant leading-relaxed line-clamp-4">
-                  {scripturePreview}
-                </span>
-              ) : null}
-            </label>
-
-            <label className="block">
-              <span className={fieldLabel}>Speaker</span>
-              <input
-                className={fieldClass}
-                placeholder="Who is preaching"
-                value={speaker}
-                onChange={(event) => setSpeaker(event.target.value)}
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className={fieldLabel}>Date</span>
-                <input
-                  className={fieldClass}
-                  type="date"
-                  value={date}
-                  onChange={(event) => setDate(event.target.value)}
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabel}>Length</span>
-                <input
-                  className={fieldClass}
-                  placeholder="35:00"
-                  value={duration}
-                  onChange={(event) => setDuration(event.target.value)}
-                />
-              </label>
-            </div>
-
-            <label className="block">
-              <span className={fieldLabel}>Series</span>
-              <input
-                className={fieldClass}
-                placeholder="Series name"
-                value={series}
-                onChange={(event) => setSeries(event.target.value)}
-              />
-            </label>
-
-            {superadmin ? (
-              <ChurchSharePicker
-                churches={churches}
-                value={churchIds}
-                onChange={setChurchIds}
-                label="Churches that can view this sermon"
-              />
-            ) : null}
-
-            <div className="space-y-2">
-              <span className={fieldLabel}>Private notes</span>
-              {notes.map((note, index) => (
-                <div key={index} className="relative">
-                  <textarea
-                    value={note}
-                    onChange={(event) =>
-                      setNotes((prev) =>
-                        prev.map((row, i) => (i === index ? event.target.value : row)),
-                      )
-                    }
-                    className={`${fieldClass} pr-9 resize-none`}
-                    placeholder="Never shown on screen"
-                    rows={2}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setNotes((prev) => prev.filter((_, i) => i !== index))}
-                    className="absolute top-2 right-2 p-1 rounded text-on-surface-variant hover:text-error"
-                    aria-label="Remove note"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">close</span>
-                  </button>
+          <aside
+            aria-label="Sermon side panel"
+            className="shrink-0 w-[340px] xl:w-[360px] border-l border-[color:var(--mc-hairline)] overflow-y-auto custom-scrollbar"
+          >
+            <div className="p-5 space-y-7">
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <SectionLabel>Preview</SectionLabel>
+                  <span className="text-[12px] text-on-surface-variant">{previewLabel}</span>
                 </div>
-              ))}
-              <button
-                type="button"
-                onClick={() => setNotes((prev) => [...prev, ""])}
-                className="w-full flex items-center justify-center gap-1 py-2 rounded-lg border border-dashed border-white/15 text-xs text-on-surface-variant hover:text-secondary hover:border-secondary/40"
-              >
-                <span className="material-symbols-outlined text-[16px]">sticky_note_2</span>
-                Add private note
-              </button>
+                <StagePreview cue={previewCue} stageBg={stageBg} />
+                <p className="mt-2 text-[12px] text-on-surface-variant">
+                  This is what the screen shows. Only the slides are projected.
+                </p>
+              </div>
+
+              {scripturePreview ? (
+                <div>
+                  <div className="flex items-baseline justify-between">
+                    <SectionLabel>Scripture</SectionLabel>
+                    <span className="text-[12px] text-on-surface-variant">KJV • public domain</span>
+                  </div>
+                  <p className="text-[13px] leading-relaxed text-on-surface line-clamp-6">
+                    {scripturePreview}
+                  </p>
+                  {scriptureHint ? (
+                    <p className="mt-1.5 text-[11px] text-on-surface-variant">{scriptureHint}</p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div>
+                <SectionLabel>Private notes</SectionLabel>
+                <div className="space-y-2">
+                  {notes.map((note, index) => (
+                    <div key={index} className="group relative">
+                      <textarea
+                        value={note}
+                        onChange={(event) =>
+                          setNotes((prev) =>
+                            prev.map((row, i) => (i === index ? event.target.value : row)),
+                          )
+                        }
+                        className="ui-input !h-auto py-2 pr-9 resize-none leading-relaxed"
+                        placeholder="Never shown on screen"
+                        rows={3}
+                      />
+                      <span className="absolute top-1 right-1">
+                        <IconButton
+                          icon="close"
+                          label="Remove note"
+                          onClick={() => setNotes((prev) => prev.filter((_, i) => i !== index))}
+                        />
+                      </span>
+                    </div>
+                  ))}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="sticky_note_2"
+                    onClick={() => setNotes((prev) => [...prev, ""])}
+                  >
+                    Add private note
+                  </Button>
+                </div>
+              </div>
+
+              {superadmin ? (
+                <div>
+                  <ChurchSharePicker
+                    churches={churches}
+                    value={churchIds}
+                    onChange={setChurchIds}
+                    label="Churches that can view this sermon"
+                  />
+                </div>
+              ) : null}
             </div>
           </aside>
         ) : null}
@@ -1220,7 +1431,12 @@ export default function Sermon() {
         title="Delete this slide?"
         description="It is removed when you save the sermon."
         highlight={
-          deletingSlide ? sermonPlainText(deletingSlide.content).slice(0, 80) : undefined
+          deletingSlide
+            ? (deletingSlide.layout
+                ? layoutPlainText(deletingSlide.layout) || "Designed slide"
+                : sermonPlainText(deletingSlide.content)
+              ).slice(0, 80)
+            : undefined
         }
         onClose={() => setDeleteSlideId(null)}
         onConfirm={() => {
@@ -1229,14 +1445,7 @@ export default function Sermon() {
         }}
       />
 
-      <ConfirmDialog
-        open={Boolean(deletingSermon)}
-        title="Delete Sermon?"
-        description={`Are you sure you want to delete "${deletingSermon?.title ?? ""}"? This action cannot be undone.`}
-        highlight={deletingSermon ? `"${deletingSermon.title}"` : undefined}
-        onClose={() => setDeletingSermon(null)}
-        onConfirm={() => confirmDeleteSermon()}
-      />
+      {deleteDialog}
       {draft.dialog}
     </section>
   );

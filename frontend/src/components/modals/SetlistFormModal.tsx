@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Modal from "./Modal";
 import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
+import Icon from "../Icon";
 
 export type SetlistFormValues = {
   name: string;
@@ -89,7 +90,9 @@ export default function SetlistFormModal({
     if (churches?.length && values.churchIds.length === 0) return;
     setSaving(true);
     try {
-      await onSubmit(values);
+      await draft.submit(async () => {
+        await onSubmit(values);
+      });
     } finally {
       setSaving(false);
     }
@@ -104,10 +107,8 @@ export default function SetlistFormModal({
       labelledBy={titleId}
       describedBy={descId}
       panelClassName="w-full max-w-lg rounded-2xl"
-      backdropClassName="bg-black/60 backdrop-blur-md"
+      backdropClassName="bg-black/60 backdrop-blur-sm"
     >
-      <div className="absolute -top-24 -left-24 w-48 h-48 bg-primary/20 blur-[80px] rounded-full pointer-events-none" />
-      <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-secondary/20 blur-[80px] rounded-full pointer-events-none" />
 
       <div className="relative p-8">
         <div className="flex justify-between items-start mb-8">
@@ -128,7 +129,7 @@ export default function SetlistFormModal({
             className="p-2 text-on-surface-variant hover:text-white transition-colors"
             aria-label="Close"
           >
-            <span className="material-symbols-outlined">close</span>
+            <Icon name="close" />
           </button>
         </div>
 
@@ -177,9 +178,7 @@ export default function SetlistFormModal({
                   className="w-full bg-surface-container border border-white/10 rounded-xl px-4 py-3 text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 transition-all appearance-none"
                   type="date"
                 />
-                <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none text-sm">
-                  calendar_today
-                </span>
+                <Icon name="calendar_today" className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none text-sm" />
               </div>
             </div>
             <div className="space-y-2 group">
@@ -203,9 +202,7 @@ export default function SetlistFormModal({
                   placeholder="75 min"
                   type="text"
                 />
-                <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none text-sm">
-                  timer
-                </span>
+                <Icon name="timer" className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none text-sm" />
               </div>
             </div>
           </div>
@@ -235,9 +232,7 @@ export default function SetlistFormModal({
                   </option>
                 ))}
               </select>
-              <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none group-hover:text-primary transition-colors">
-                expand_more
-              </span>
+              <Icon name="expand_more" className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none group-hover:text-primary transition-colors" />
             </div>
           </div>
 
@@ -310,9 +305,7 @@ export default function SetlistFormModal({
               ) : null}
               {saving ? "Saving…" : isEdit ? "Save Setlist" : "Create Setlist"}
               {saving ? null : (
-                <span className="material-symbols-outlined text-sm">
-                  arrow_forward
-                </span>
+                <Icon name="arrow_forward" className="text-sm" />
               )}
             </button>
           </div>

@@ -21,7 +21,7 @@ export default function Modal({
   labelledBy,
   describedBy,
   panelClassName = "w-full max-w-lg rounded-2xl",
-  backdropClassName = "bg-black/60 backdrop-blur-md",
+  backdropClassName = "bg-black/45 backdrop-blur-sm",
   rootClassName = "z-[100]",
   bare = false,
   captureEscape = false,
@@ -54,7 +54,7 @@ export default function Modal({
         aria-modal="true"
         aria-labelledby={labelledBy}
         aria-describedby={describedBy}
-        className={`relative overflow-hidden shadow-2xl modal-in ${bare ? "" : "glass-modal"} ${panelClassName}`}
+        className={`relative overflow-hidden shadow-2xl modal-in ${bare ? "" : "modal-surface"} ${panelClassName}`}
         onClick={(event) => event.stopPropagation()}
       >
         {children}

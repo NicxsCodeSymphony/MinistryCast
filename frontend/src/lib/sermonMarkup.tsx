@@ -139,6 +139,11 @@ export function parseSermonRuns(source: string): SermonRun[] {
 }
 
 function serializeNode(node: Node, marks: SermonRun): string {
+  // Keep a canvas layout marker (<!--mc-layout:...-->) when slide text is edited elsewhere.
+  if (node.nodeType === Node.COMMENT_NODE) {
+    const data = (node as Comment).data;
+    return data.startsWith("mc-layout:") ? `<!--${data}-->` : "";
+  }
   if (node.nodeType === Node.TEXT_NODE) {
     const value = node.textContent ?? "";
     if (!value) return "";

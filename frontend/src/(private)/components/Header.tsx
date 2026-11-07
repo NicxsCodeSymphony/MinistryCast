@@ -15,6 +15,7 @@ import {
   type AppNotification,
 } from "../../lib/notifications";
 import { supabase } from "../../lib/supabase";
+import Icon from "../../components/Icon";
 
 type HeaderProps = {
   searchPlaceholder?: string;
@@ -175,7 +176,7 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
   };
 
   return (
-    <header className="h-16 shrink-0 sticky top-0 z-40 bg-surface/50 backdrop-blur-lg border-b border-white/5 flex justify-between items-center gap-4 px-4 sm:px-8">
+    <header className="h-16 shrink-0 sticky top-0 z-40 app-chrome border-b flex justify-between items-center gap-4 px-4 sm:px-8">
       <div className="flex items-center gap-4 lg:gap-8 min-w-0 flex-1">
         {pageMode ? (
           <span className="text-on-surface text-2xl font-semibold tracking-tight">
@@ -184,9 +185,7 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
         ) : (
           <>
             <div className="relative group w-full max-w-md min-w-0">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors text-[20px]">
-                search
-              </span>
+              <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors text-[20px]" />
               <input
                 id="app-search"
                 value={query}
@@ -206,7 +205,7 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
                   aria-label={t("header.clearSearch")}
                 >
-                  <span className="material-symbols-outlined text-[18px]">close</span>
+                  <Icon name="close" className="text-[18px]" />
                 </button>
               ) : (
                 <kbd className="hidden sm:block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-on-surface-variant/50 font-mono">
@@ -246,13 +245,9 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
             }
             aria-label={syncLabel(sync)}
           >
-            <span
-              className={`material-symbols-outlined ${
+            <Icon name={sync.syncing ? syncIcon(sync) : sync.error ? "cloud_off" : "cloud_done"} className={`${
                 sync.syncing ? "animate-spin" : ""
-              }`}
-            >
-              {sync.syncing ? syncIcon(sync) : sync.error ? "cloud_off" : "cloud_done"}
-            </span>
+              }`} />
           </button>
         ) : (
           <>
@@ -266,19 +261,15 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
                 (sync.online ? t("header.backupNow") : t("header.offline"))
               }
             >
-              <span
-                className={`material-symbols-outlined filled text-primary text-[16px] ${
+              <Icon name={syncIcon(sync)} className={`filled text-primary text-[16px] ${
                   sync.syncing ? "animate-spin" : ""
-                }`}
-              >
-                {syncIcon(sync)}
-              </span>
+                }`} />
               <span>{syncLabel(sync)}</span>
             </button>
 
             <Link
               to="/live"
-              className="bg-gradient-to-r from-primary to-secondary text-on-primary px-3 sm:px-4 py-1.5 rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 transition-all whitespace-nowrap"
+              className="btn-primary px-3 sm:px-4 py-1.5 rounded-lg text-sm font-semibold active:scale-95 transition-all whitespace-nowrap"
             >
               {t("header.startPresentation")}
             </Link>
@@ -296,7 +287,7 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
               if (!open) void reload();
             }}
           >
-            <span className="material-symbols-outlined">notifications</span>
+            <Icon name="notifications" />
             {unread > 0 ? (
               <span className="absolute top-1.5 right-1.5 min-w-[8px] h-2 rounded-full bg-primary" />
             ) : null}
@@ -344,9 +335,7 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <span className="material-symbols-outlined text-[18px] text-on-surface-variant">
-                              {item.icon || kindIcon(item.kind)}
-                            </span>
+                            <Icon name={item.icon || kindIcon(item.kind)} className="text-[18px] text-on-surface-variant" />
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -403,7 +392,7 @@ export default function Header({ searchPlaceholder, pageTitle }: HeaderProps) {
               referrerPolicy="no-referrer"
             />
           ) : (
-            <div className="w-full h-full bg-gradient-to-br from-primary/40 to-secondary/40" />
+            <div className="w-full h-full bg-primary/15" />
           )}
         </div>
       </div>

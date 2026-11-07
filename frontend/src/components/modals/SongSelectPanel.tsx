@@ -6,8 +6,9 @@ import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
 import { PAGE_SIZE, type Song } from "../../lib/types";
 import ChordLyricPreview from "../ChordLyricPreview";
 import SongThumb from "../SongThumb";
-import { TableSkeleton } from "../Skeleton";
+import { TableSkeleton, RowsSkeleton } from "../Skeleton";
 import { newServiceItem, type ServiceItem } from "./serviceItem";
+import Icon from "../Icon";
 
 type SongSelectPanelProps = {
   setlistName: string;
@@ -222,7 +223,7 @@ export default function SongSelectPanel({
       onClose();
       return;
     }
-    const ok = await commit();
+    const ok = await draft.submit(commit);
     if (ok) draft.bypass(onClose);
   };
 
@@ -235,7 +236,7 @@ export default function SongSelectPanel({
         className="absolute top-4 right-4 z-50 w-10 h-10 rounded-full bg-surface-container-high/50 flex items-center justify-center text-on-surface-variant hover:text-on-surface border border-white/5"
         aria-label="Close"
       >
-        <span className="material-symbols-outlined">close</span>
+        <Icon name="close" />
       </button>
 
       <header className="px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-white/10 shrink-0 pr-16">
@@ -248,7 +249,7 @@ export default function SongSelectPanel({
             >
               {setlistName}
             </button>
-            <span className="material-symbols-outlined text-sm">chevron_right</span>
+            <Icon name="chevron_right" className="text-sm" />
             <span className="font-semibold tracking-[0.05em] text-[12px] text-primary uppercase">
               Add Song
             </span>
@@ -259,10 +260,8 @@ export default function SongSelectPanel({
             Done saves. Closing without Done asks to save your draft.
           </p>
         </div>
-        <div className="w-full md:w-96 glass-panel rounded-xl flex items-center px-4 py-2.5">
-          <span className="material-symbols-outlined text-on-surface-variant mr-3">
-            search
-          </span>
+        <div className="w-full md:w-96 panel rounded-xl flex items-center px-4 py-2.5">
+          <Icon name="search" className="text-on-surface-variant mr-3" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -282,7 +281,7 @@ export default function SongSelectPanel({
                   key={id}
                   type="button"
                   onClick={() => unpick(id)}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-primary/15 border border-primary/30 px-3 py-1 text-xs text-on-surface"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 border border-primary/30 px-3 py-1 text-xs text-on-surface"
                   title="Remove from picks"
                 >
                   <span className="font-bold tabular-nums text-primary">
@@ -291,7 +290,7 @@ export default function SongSelectPanel({
                   <span className="max-w-[12rem] truncate">
                     {pickedSongs[id]?.title ?? "Song"}
                   </span>
-                  <span className="material-symbols-outlined text-[14px]">close</span>
+                  <Icon name="close" className="text-[14px]" />
                 </button>
               ))}
             </div>
@@ -321,7 +320,7 @@ export default function SongSelectPanel({
                     }}
                     className={`rounded-xl p-4 flex items-center justify-between cursor-pointer gap-3 ${
                       checked
-                        ? "glass-panel border-primary/30 bg-primary/10 relative overflow-hidden"
+                        ? "panel border-primary/30 bg-primary/10 relative overflow-hidden"
                         : previewing
                           ? "border border-white/10 bg-white/5"
                           : "border border-transparent hover:bg-white/5"
@@ -373,9 +372,11 @@ export default function SongSelectPanel({
                   onClick={() => void load("more")}
                   className="text-sm text-primary"
                 >
-                  {loadingMore
-                    ? "Loading…"
-                    : `Load more (${songs.length} of ${total})`}
+                  {loadingMore ? (
+                    <RowsSkeleton rows={2} className="w-64" />
+                  ) : (
+                    `Load more (${songs.length} of ${total})`
+                  )}
                 </button>
               </div>
             ) : null}
@@ -385,7 +386,7 @@ export default function SongSelectPanel({
               type="button"
               disabled={saving}
               onClick={() => void finish()}
-              className="w-full py-3.5 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold rounded-xl disabled:opacity-50"
+              className="w-full py-3.5 btn-primary font-bold rounded-xl disabled:opacity-50"
             >
               {saving ? "Saving…" : "Done"}
             </button>
@@ -428,7 +429,7 @@ export default function SongSelectPanel({
                   type="button"
                   disabled={saving}
                   onClick={() => void finish()}
-                  className="w-full py-3.5 bg-gradient-to-r from-primary to-primary-container text-on-primary font-bold rounded-xl disabled:opacity-50"
+                  className="w-full py-3.5 btn-primary font-bold rounded-xl disabled:opacity-50"
                 >
                   {saving ? "Saving…" : "Done"}
                 </button>

@@ -1,4 +1,5 @@
 import { usePrefs } from "../lib/PrefsContext";
+import { RowsSkeleton } from "./Skeleton";
 
 export function LoadMoreBar({
   shown,
@@ -20,7 +21,8 @@ export function LoadMoreBar({
       <p className="text-xs text-on-surface-variant">
         {t("common.showing", { shown, total })}
       </p>
-      {hasMore ? (
+      {hasMore && loading ? <RowsSkeleton rows={2} className="w-full max-w-md" /> : null}
+      {hasMore && !loading ? (
         <button
           type="button"
           disabled={loading}

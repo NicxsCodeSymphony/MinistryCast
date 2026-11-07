@@ -9,26 +9,7 @@ import {
 import AnimatedOutlet from "./components/AnimatedOutlet";
 import App from "./App";
 import WelcomePage from "./(public)/Welcome";
-import SignUp from "./(public)/SignUp";
-import Register from "./(public)/Register";
-import ForgotPassword from "./(public)/ForgotPassword";
-import ResetPassword from "./(public)/ResetPassword";
-import Onboarding from "./(public)/Onboarding";
-import Dashboard from "./(private)/pages/Dashboard";
 import PrivateLayout from "./(private)/layout/PrivateLayout";
-import Setlists from "./(private)/pages/Setlists";
-import Songs from "./(private)/pages/Songs";
-import Categories from "./(private)/pages/Categories";
-import Settings from "./(private)/pages/Settings";
-import Sermon from "./(private)/pages/Sermon";
-import Live from "./(private)/pages/Live";
-import Output from "./(private)/pages/Output";
-import Chat from "./(private)/pages/Chat";
-import ApprovalsRedirect from "./(private)/pages/ApprovalsRedirect";
-import AdminHome from "./(private)/pages/admin/AdminHome";
-import AdminChurches from "./(private)/pages/admin/AdminChurches";
-import AdminAccounts from "./(private)/pages/admin/AdminAccounts";
-import AdminAudit from "./(private)/pages/admin/AdminAudit";
 import RequireActive from "./(private)/RequireActive";
 import { PrefsProvider } from "./lib/PrefsContext";
 import { ToastProvider } from "./lib/ToastContext";
@@ -36,6 +17,15 @@ import ForceUpdate from "./components/ForceUpdate";
 import { ensureBibleCacheFresh } from "./lib/bible";
 import { invalidateQueries } from "./lib/offline/queryCache";
 import { missingSupabaseEnv } from "./lib/supabase";
+import { applyPalette, readStoredPalette } from "./lib/palettes";
+
+// Declared before bootApp() runs below (page() registers into this list).
+type PageModule = { default: React.ComponentType };
+const pageLoaders: Array<() => Promise<PageModule>> = [];
+const CHUNK_RELOAD_KEY = "mc.chunkReloadAt";
+
+// Apply the saved color palette before first paint (no flash of default colors).
+applyPalette(readStoredPalette());
 
 const root = document.getElementById("root") as HTMLElement;
 
@@ -69,6 +59,64 @@ if (missingSupabaseEnv) {
   );
 } else {
   bootApp();
+}
+
+/**
+ * Route-level code splitting: the sign-in screen, route guard and app shell
+ * stay in the entry chunk; every other page is its own chunk, loaded when the
+ * route opens.
+ */
+
+function page(load: () => Promise<PageModule>) {
+  pageLoaders.push(load);
+  return async () => {
+    try {
+      return { Component: (await load()).default };
+    } catch (err) {
+      // A new web deploy removed this chunk's old hash: reload once to pick up
+      // the current build instead of showing a broken page.
+      const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0);
+      if (navigator.onLine && Date.now() - last > 60_000) {
+        sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+        window.location.reload();
+        return new Promise<never>(() => undefined);
+      }
+      throw err;
+    }
+  };
+}
+
+/**
+ * Web only: once the app is idle, pull the remaining page chunks (static app
+ * code from our own origin; no API calls, no data) so pages still open if the
+ * connection drops mid-session. The desktop app serves chunks from disk.
+ */
+function warmPageChunks() {
+  const idle = (run: () => void) => {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(run, { timeout: 5_000 });
+    } else {
+      setTimeout(run, 1_500);
+    }
+  };
+  const queue = [...pageLoaders];
+  const next = () => {
+    const load = queue.shift();
+    if (!load) {
+      // Marker for tests/diagnostics: every page can now open offline.
+      document.documentElement.dataset.pagesReady = "1";
+      return;
+    }
+    if (!navigator.onLine) return;
+    void load()
+      .catch(() => undefined)
+      .finally(() => idle(next));
+  };
+  // First idle moment after load: requestIdleCallback only runs when the
+  // main thread has nothing else to do, so it never competes with the UI.
+  const start = () => idle(next);
+  if (document.readyState === "complete") start();
+  else window.addEventListener("load", start, { once: true });
 }
 
 function bootApp() {
@@ -128,49 +176,45 @@ function bootApp() {
       .catch(() => undefined);
   }
 
+  const approvalsRedirect = page(() => import("./(private)/pages/ApprovalsRedirect"));
+
   const routes = [
     {
       element: <Root />,
       children: [
-        { path: "/output", element: <Output /> },
+        { path: "/output", lazy: page(() => import("./(private)/pages/Output")) },
         {
           element: <AnimatedOutlet />,
           children: [
             { path: "/", element: <App /> },
             { path: "/welcome", element: <WelcomePage /> },
-            { path: "/register", element: <Register /> },
-            { path: "/forgot-password", element: <ForgotPassword /> },
-            { path: "/reset-password", element: <ResetPassword /> },
-            { path: "/signup", element: <SignUp /> },
+            { path: "/register", lazy: page(() => import("./(public)/Register")) },
+            { path: "/forgot-password", lazy: page(() => import("./(public)/ForgotPassword")) },
+            { path: "/reset-password", lazy: page(() => import("./(public)/ResetPassword")) },
+            { path: "/signup", lazy: page(() => import("./(public)/SignUp")) },
           ],
         },
         {
           element: <RequireActive />,
           children: [
-            { path: "/onboarding", element: <Onboarding /> },
+            { path: "/onboarding", lazy: page(() => import("./(public)/Onboarding")) },
             {
               element: <PrivateLayout />,
               children: [
-                { path: "/admin", element: <AdminHome /> },
-                {
-                  path: "/admin/approvals",
-                  element: <ApprovalsRedirect />,
-                },
-                {
-                  path: "/approvals",
-                  element: <ApprovalsRedirect />,
-                },
-                { path: "/admin/churches", element: <AdminChurches /> },
-                { path: "/admin/accounts", element: <AdminAccounts /> },
-                { path: "/admin/audit", element: <AdminAudit /> },
-                { path: "/dashboard", element: <Dashboard /> },
-                { path: "/setlists", element: <Setlists /> },
-                { path: "/songs", element: <Songs /> },
-                { path: "/chat", element: <Chat /> },
-                { path: "/categories", element: <Categories /> },
-                { path: "/settings", element: <Settings /> },
-                { path: "/sermon", element: <Sermon /> },
-                { path: "/live", element: <Live /> },
+                { path: "/admin", lazy: page(() => import("./(private)/pages/admin/AdminHome")) },
+                { path: "/admin/approvals", lazy: approvalsRedirect },
+                { path: "/approvals", lazy: approvalsRedirect },
+                { path: "/admin/churches", lazy: page(() => import("./(private)/pages/admin/AdminChurches")) },
+                { path: "/admin/accounts", lazy: page(() => import("./(private)/pages/admin/AdminAccounts")) },
+                { path: "/admin/audit", lazy: page(() => import("./(private)/pages/admin/AdminAudit")) },
+                { path: "/dashboard", lazy: page(() => import("./(private)/pages/Dashboard")) },
+                { path: "/setlists", lazy: page(() => import("./(private)/pages/Setlists")) },
+                { path: "/songs", lazy: page(() => import("./(private)/pages/Songs")) },
+                { path: "/chat", lazy: page(() => import("./(private)/pages/Chat")) },
+                { path: "/categories", lazy: page(() => import("./(private)/pages/Categories")) },
+                { path: "/settings", lazy: page(() => import("./(private)/pages/Settings")) },
+                { path: "/sermon", lazy: page(() => import("./(private)/pages/Sermon")) },
+                { path: "/live", lazy: page(() => import("./(private)/pages/Live")) },
               ],
             },
           ],
@@ -182,6 +226,8 @@ function bootApp() {
   const router = isTauri
     ? createHashRouter(routes)
     : createBrowserRouter(routes, { basename });
+
+  if (!isTauri) warmPageChunks();
 
   ReactDOM.createRoot(root).render(
     <React.StrictMode>

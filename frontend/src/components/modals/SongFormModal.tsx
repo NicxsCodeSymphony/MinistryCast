@@ -47,6 +47,7 @@ import { categoryTone, categoryVisual } from "../../lib/categoryColor";
 import { useUnsavedDraft } from "../../lib/useUnsavedDraft";
 import Modal from "./Modal";
 import { useToast } from "../../lib/ToastContext";
+import Icon from "../Icon";
 
 export type SongFormValues = {
   title: string;
@@ -346,7 +347,9 @@ export default function SongFormModal({
     if (!values.title.trim() || saving) return;
     setSaving(true);
     try {
-      await onSubmit(values);
+      await draft.submit(async () => {
+        await onSubmit(values);
+      });
     } finally {
       setSaving(false);
     }
@@ -909,7 +912,7 @@ export default function SongFormModal({
             className="text-on-surface-variant hover:text-on-surface transition-colors"
             aria-label="Close"
           >
-            <span className="material-symbols-outlined text-3xl">close</span>
+            <Icon name="close" className="text-3xl" />
           </button>
         </div>
 
@@ -961,16 +964,12 @@ export default function SongFormModal({
             {!values.artist.trim() && (singersBusy || singers.length || singersError) ? (
               <div className="-mt-4 rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined filled text-primary text-[18px]">
-                    auto_awesome
-                  </span>
+                  <Icon name="auto_awesome" className="filled text-primary text-[18px]" />
                   <p className="text-xs font-semibold text-on-surface">
                     Who sings “{singersFor || values.title.trim()}”? Pick one to fill the lyrics.
                   </p>
                   {singersBusy ? (
-                    <span className="material-symbols-outlined text-[16px] text-primary animate-spin ml-auto">
-                      progress_activity
-                    </span>
+                    <Icon name="progress_activity" className="text-[16px] text-primary animate-spin ml-auto" />
                   ) : null}
                 </div>
                 {singers.length ? (
@@ -991,9 +990,7 @@ export default function SongFormModal({
                           />
                         ) : (
                           <span className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                            <span className="material-symbols-outlined text-[16px] text-primary">
-                              person
-                            </span>
+                            <Icon name="person" className="text-[16px] text-primary" />
                           </span>
                         )}
                         <span className="min-w-0">
@@ -1009,9 +1006,7 @@ export default function SongFormModal({
                   </div>
                 ) : aiSongBusy ? (
                   <p className="text-xs text-on-surface-variant flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[16px] text-primary animate-spin">
-                      progress_activity
-                    </span>
+                    <Icon name="progress_activity" className="text-[16px] text-primary animate-spin" />
                     Not in the catalogs. Asking AI for the lyrics…
                   </p>
                 ) : singersError ? (
@@ -1023,7 +1018,7 @@ export default function SongFormModal({
                         onClick={() => void askAiForSong()}
                         className="inline-flex items-center gap-1 px-3 h-7 rounded-full bg-primary/15 text-primary hover:bg-primary/25 text-[11px] font-semibold"
                       >
-                        <span className="material-symbols-outlined filled text-[14px]">auto_awesome</span>
+                        <Icon name="auto_awesome" className="filled text-[14px]" />
                         Ask AI
                       </button>
                     ) : null}
@@ -1044,9 +1039,7 @@ export default function SongFormModal({
                 </p>
                 {musicBusy ? (
                   <span className="inline-flex items-center gap-1 text-[11px] text-primary">
-                    <span className="material-symbols-outlined text-[16px] animate-spin">
-                      progress_activity
-                    </span>
+                    <Icon name="progress_activity" className="text-[16px] animate-spin" />
                     Looking up key, BPM & beat…
                   </span>
                 ) : null}
@@ -1177,9 +1170,7 @@ export default function SongFormModal({
                             : "bg-white/5 text-on-surface-variant border-white/10 hover:bg-white/10"
                         }`}
                       >
-                        <span className="material-symbols-outlined text-[14px] leading-none">
-                          {category.icon || "label"}
-                        </span>
+                        <Icon name={category.icon || "label"} className="text-[14px] leading-none" />
                         {category.name}
                       </button>
                     );
@@ -1252,9 +1243,7 @@ export default function SongFormModal({
                   title="Open wide editor"
                   aria-label="Open wide editor"
                 >
-                  <span className="material-symbols-outlined text-[18px]">
-                    open_in_full
-                  </span>
+                  <Icon name="open_in_full" className="text-[18px]" />
                 </button>
               </div>
               {values.lyrics.trim() ? (
@@ -1282,7 +1271,7 @@ export default function SongFormModal({
                   className="h-9 px-3 rounded-lg border border-white/10 text-on-surface-variant hover:text-on-surface hover:bg-white/5 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
                   title="Search Ultimate Guitar for the original chord chart, then paste it here"
                 >
-                  <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+                  <Icon name="open_in_new" className="text-[16px]" />
                   Find chords
                 </button>
                 <button
@@ -1292,11 +1281,7 @@ export default function SongFormModal({
                   className="h-9 px-3 rounded-lg bg-secondary/15 text-secondary hover:bg-secondary/25 border border-secondary/20 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
                   title="Let AI write chords above the lyrics"
                 >
-                  <span
-                    className={`material-symbols-outlined text-[16px] ${chordsBusy ? "animate-spin" : ""}`}
-                  >
-                    {chordsBusy ? "progress_activity" : "music_note"}
-                  </span>
+                  <Icon name={chordsBusy ? "progress_activity" : "music_note"} className={`text-[16px] ${chordsBusy ? "animate-spin" : ""}`} />
                   {chordsBusy
                     ? "Adding chords…"
                     : hasChordLines(values.lyrics)
@@ -1311,13 +1296,9 @@ export default function SongFormModal({
                   title="Fill lyrics from the song title"
                   aria-label="Fill lyrics from the song title"
                 >
-                  <span
-                    className={`material-symbols-outlined filled text-[20px] ${
+                  <Icon name={lyricsBusy ? "progress_activity" : "auto_awesome"} className={`filled text-[20px] ${
                       lyricsBusy ? "animate-spin" : ""
-                    }`}
-                  >
-                    {lyricsBusy ? "progress_activity" : "auto_awesome"}
-                  </span>
+                    }`} />
                 </button>
               </div>
               {lyricsHint ? (
@@ -1351,9 +1332,7 @@ export default function SongFormModal({
                     />
                   ) : (
                     <div className="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-400 shrink-0">
-                      <span className="material-symbols-outlined">
-                        play_circle
-                      </span>
+                      <Icon name="play_circle" />
                     </div>
                   )}
                   <div className="min-w-0">
@@ -1396,9 +1375,7 @@ export default function SongFormModal({
                   className="w-full flex items-center gap-3 bg-white/5 p-4 rounded-xl border border-white/5 hover:border-primary/30 transition-all text-left"
                 >
                   <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center text-green-400 shrink-0">
-                    <span className="material-symbols-outlined">
-                      audio_file
-                    </span>
+                    <Icon name="audio_file" />
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs font-medium text-on-surface">
@@ -1425,9 +1402,7 @@ export default function SongFormModal({
 
         <div className="px-8 py-6 border-t border-white/10 bg-white/5 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
           <div className="flex items-center gap-2 text-on-surface-variant text-sm">
-            <span className="material-symbols-outlined filled text-primary">
-              info
-            </span>
+            <Icon name="info" className="filled text-primary" />
             <span>
               Song will be synced to all connected production stations.
             </span>
@@ -1445,14 +1420,12 @@ export default function SongFormModal({
               form="song-form"
               type="submit"
               disabled={saving || !values.title.trim()}
-              className="flex-1 md:flex-none px-10 py-3 rounded-full text-xs font-semibold bg-gradient-to-r from-primary-container to-secondary-container text-white hover:opacity-90 hover:shadow-[0_0_20px_rgba(121,0,205,0.45)] transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 disabled:hover:shadow-none disabled:hover:opacity-60 disabled:active:scale-100"
+              className="flex-1 md:flex-none px-10 py-3 rounded-lg text-xs font-semibold btn-primary transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 disabled:hover:shadow-none disabled:hover:opacity-60 disabled:active:scale-100"
             >
               {saving ? (
                 <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
               ) : (
-                <span className="material-symbols-outlined text-sm">
-                  check_circle
-                </span>
+                <Icon name="check_circle" className="text-sm" />
               )}
               {saving ? "Saving…" : isEdit ? "Save Changes" : "Save Song"}
             </button>
@@ -1465,7 +1438,7 @@ export default function SongFormModal({
         onClose={() => setLyricsEditorOpen(false)}
         labelledBy="lyrics-editor-title"
         panelClassName="w-[min(960px,94vw)] h-[min(88vh,860px)] flex flex-col rounded-2xl"
-        backdropClassName="bg-black/75 backdrop-blur-md"
+        backdropClassName="bg-black/75 backdrop-blur-sm"
         rootClassName="z-[110]"
         bare
       >
@@ -1489,13 +1462,9 @@ export default function SongFormModal({
                 onClick={requestLyrics}
                 className="px-3 py-2 rounded-lg text-xs font-medium text-primary hover:bg-primary/10 flex items-center gap-1 disabled:opacity-40"
               >
-                <span
-                  className={`material-symbols-outlined filled text-[16px] ${
+                <Icon name={lyricsBusy ? "progress_activity" : "auto_awesome"} className={`filled text-[16px] ${
                     lyricsBusy ? "animate-spin" : ""
-                  }`}
-                >
-                  {lyricsBusy ? "progress_activity" : "auto_awesome"}
-                </span>
+                  }`} />
                 Fill
               </button>
               <button
@@ -1504,11 +1473,7 @@ export default function SongFormModal({
                 onClick={() => void addChords()}
                 className="px-3 py-2 rounded-lg text-xs font-medium text-secondary hover:bg-secondary/10 flex items-center gap-1 disabled:opacity-40"
               >
-                <span
-                  className={`material-symbols-outlined text-[16px] ${chordsBusy ? "animate-spin" : ""}`}
-                >
-                  {chordsBusy ? "progress_activity" : "music_note"}
-                </span>
+                <Icon name={chordsBusy ? "progress_activity" : "music_note"} className={`text-[16px] ${chordsBusy ? "animate-spin" : ""}`} />
                 {hasChordLines(values.lyrics) ? "Redo chords" : "Chords"}
               </button>
               <button

@@ -7,6 +7,7 @@ import {
   transposeFor,
   type ChordDisplay,
 } from "../lib/chordDisplay";
+import Icon from "./Icon";
 
 /** Show/hide chords on screen, plus color, size, key and sharps/flats while shown. */
 export default function ChordControls({
@@ -129,7 +130,7 @@ export default function ChordControls({
                   className="h-8 w-8 rounded-lg border border-white/10 bg-surface-container hover:bg-white/5 flex items-center justify-center"
                   aria-label="Key down a half step"
                 >
-                  <span className="material-symbols-outlined text-[18px]">remove</span>
+                  <Icon name="remove" className="text-[18px]" />
                 </button>
                 <div className="flex-1 text-center leading-tight">
                   <p className="text-sm font-semibold text-on-surface">
@@ -153,7 +154,7 @@ export default function ChordControls({
                   className="h-8 w-8 rounded-lg border border-white/10 bg-surface-container hover:bg-white/5 flex items-center justify-center"
                   aria-label="Key up a half step"
                 >
-                  <span className="material-symbols-outlined text-[18px]">add</span>
+                  <Icon name="add" className="text-[18px]" />
                 </button>
               </div>
             </div>

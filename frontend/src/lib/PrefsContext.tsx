@@ -22,6 +22,7 @@ import {
   type Lang,
 } from "./i18n";
 import { setCurrentLanguage } from "./langStore";
+import { applyPalette, readStoredPalette, storePalette, type PaletteId } from "./palettes";
 
 const THEME_KEY = "mc.theme";
 const LANG_KEY = "mc.lang";
@@ -33,6 +34,8 @@ type PrefsValue = {
   language: Lang;
   version: string;
   setTheme: (theme: ThemeName) => void;
+  palette: PaletteId;
+  setPalette: (palette: PaletteId) => void;
   setLanguage: (language: Lang) => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   clockLocale: string;
@@ -133,6 +136,11 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
   // Allow nesting: if a parent already provides prefs, reuse it.
   const existing = useContext(PrefsContext);
   const [theme, setThemeState] = useState<ThemeName>(readStoredTheme);
+  const [palette, setPaletteState] = useState<PaletteId>(readStoredPalette);
+
+  useEffect(() => {
+    if (!existing) applyPalette(palette);
+  }, [existing, palette]);
   const [langUserId, setLangUserId] = useState<string | null>(() =>
     profileUserId(readCachedSessionProfile()),
   );
@@ -248,6 +256,11 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const setPalette = useCallback((next: PaletteId) => {
+    setPaletteState(next);
+    storePalette(next);
+  }, []);
+
   const setLanguage = useCallback(
     (next: Lang) => {
       setLanguageState(next);
@@ -269,11 +282,13 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
       language,
       version,
       setTheme,
+      palette,
+      setPalette,
       setLanguage,
       t,
       clockLocale: clockLocale(language),
     }),
-    [theme, language, version, setTheme, setLanguage, t],
+    [theme, palette, language, version, setTheme, setPalette, setLanguage, t],
   );
 
   if (existing) return <>{children}</>;

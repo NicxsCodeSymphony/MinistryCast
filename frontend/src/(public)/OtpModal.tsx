@@ -140,22 +140,20 @@ export default function OtpModal({
       onClose={onClose}
       labelledBy={titleId}
       describedBy={descId}
-      panelClassName="w-full max-w-md rounded-2xl"
-      backdropClassName="bg-black/70 backdrop-blur-md"
+      panelClassName="w-full max-w-md rounded-[14px]"
+      backdropClassName="bg-black/60"
     >
-      <div className="p-8">
-        <p className="text-[10px] font-bold tracking-[0.2em] text-[#4FACFE]">
-          VERIFY EMAIL
-        </p>
+      <div className="p-6 sm:p-7">
+        <p className="text-[12px] font-medium text-primary">Verify email</p>
         <h2
           id={titleId}
-          className="mt-3 text-2xl font-bold tracking-tight text-[#E2E8F0]"
+          className="mt-3 text-[20px] font-semibold tracking-[-0.01em] text-on-surface"
         >
           Enter the 6-digit code
         </h2>
-        <p id={descId} className="mt-2 text-sm text-white/50 leading-relaxed">
+        <p id={descId} className="mt-2 text-sm text-on-surface-variant leading-relaxed">
           We sent a code to{" "}
-          <span className="text-[#E2E8F0] font-medium">{email}</span>
+          <span className="text-on-surface font-medium">{email}</span>
           . Enter it here — you do not need to click a link.
         </p>
 
@@ -176,13 +174,13 @@ export default function OtpModal({
               autoComplete={index === 0 ? "one-time-code" : "off"}
               maxLength={1}
               aria-label={`Digit ${index + 1}`}
-              className="w-11 h-14 sm:w-12 sm:h-16 rounded-[8px] border border-white/10 bg-white/10 text-center text-xl font-semibold text-[#E2E8F0] outline-none focus:border-[#4F46E5] focus:ring-1 focus:ring-[#4F46E5]/40 disabled:opacity-60"
+              className="w-11 h-12 sm:w-12 sm:h-14 rounded-lg border border-white/10 bg-surface-container-low text-center text-[20px] font-semibold tabular-nums text-on-surface outline-none focus:border-primary/60 disabled:opacity-60"
             />
           ))}
         </div>
 
         {error ? (
-          <p className="mt-4 text-sm text-[#ffb4ab]">{error}</p>
+          <p role="alert" className="mt-4 text-[13px] text-error">{error}</p>
         ) : null}
 
         <button
@@ -197,16 +195,16 @@ export default function OtpModal({
             }
             void submit(code);
           }}
-          className="mt-8 w-full min-h-[56px] bg-[#4F46E5] rounded-[8px] text-white font-semibold text-[16px] hover:brightness-110 active:scale-[0.99] transition-all disabled:opacity-60"
+          className="ui-btn ui-btn-primary mt-8 w-full h-10 justify-center text-[14px] font-medium"
         >
           {working ? "Verifying…" : "Verify code"}
         </button>
 
-        <div className="mt-4 flex items-center justify-between gap-3 text-sm">
+        <div className="mt-4 flex items-center justify-between gap-3 text-[13px]">
           <button
             type="button"
             onClick={onClose}
-            className="text-white/40 hover:text-white/70 transition-colors"
+            className="text-on-surface-variant hover:text-on-surface transition-colors"
           >
             Use a different email
           </button>
@@ -233,7 +231,7 @@ export default function OtpModal({
                 }
               })();
             }}
-            className="text-[#4FACFE] hover:underline disabled:opacity-60"
+            className="text-primary hover:underline disabled:opacity-60"
           >
             {resent ? "Code resent" : "Resend code"}
           </button>

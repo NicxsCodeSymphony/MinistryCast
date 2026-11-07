@@ -22,6 +22,7 @@ import {
 } from "../lib/chords";
 import { transposeFor, type ChordDisplay } from "../lib/chordDisplay";
 import RosterStage from "./RosterStage";
+import { SlideLayoutView, readSlideLayout } from "./sermon/slideLayout";
 
 type CueStageProps = {
   cue?: LiveCue | null;
@@ -48,6 +49,16 @@ export default function CueStage(props: CueStageProps) {
         paddingTop={props.paddingTop}
         darkText={props.darkText}
       />
+    );
+  }
+  // Sermon slides designed on the canvas carry a layout marker in their content.
+  const layout =
+    props.cue?.kind === "sermon" && !props.cue.titleSlide && !props.cue.blank
+      ? readSlideLayout(props.cue.lines.join("\n"))
+      : null;
+  if (layout) {
+    return (
+      <SlideLayoutView layout={layout} darkText={props.darkText} className={props.className} />
     );
   }
   return <LyricCueStage {...props} />;

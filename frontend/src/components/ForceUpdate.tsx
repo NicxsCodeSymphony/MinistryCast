@@ -99,9 +99,9 @@ export default function ForceUpdate() {
         : `Downloading ${nextVersion}…`;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-[#0B0B14]/92 backdrop-blur-md flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-[200] bg-[#0B0B14]/92 backdrop-blur-sm flex items-center justify-center p-6">
       <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface-container p-8 text-center">
-        <p className="text-[10px] tracking-[0.2em] font-bold text-[#4FACFE]">MINISTRYCAST</p>
+        <p className="text-[10px] tracking-[0.2em] font-bold text-primary">MINISTRYCAST</p>
         <h2 className="mt-4 text-2xl font-semibold text-on-surface">
           {phase === "error" ? "Update failed" : "Required update"}
         </h2>

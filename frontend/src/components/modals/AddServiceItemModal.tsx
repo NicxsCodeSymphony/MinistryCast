@@ -6,6 +6,7 @@ import ScriptureSelectPanel from "./ScriptureSelectPanel";
 import SermonSelectPanel from "./SermonSelectPanel";
 import SongSelectPanel from "./SongSelectPanel";
 import type { ServiceItem, ServiceItemKind } from "./serviceItem";
+import Icon from "../Icon";
 
 type Step = "picker" | ServiceItemKind;
 
@@ -62,6 +63,8 @@ type AddServiceItemModalProps = {
   onAdd: (item: ServiceItem) => void | Promise<void>;
   onAddSongs?: (items: ServiceItem[]) => void | Promise<void>;
   onRemoveSongs?: (songIds: string[]) => void | Promise<void>;
+  /** Jump straight into one flow (e.g. sermon) instead of the type picker. */
+  initialStep?: ServiceItemKind;
 };
 
 export default function AddServiceItemModal({
@@ -73,6 +76,7 @@ export default function AddServiceItemModal({
   onAdd,
   onAddSongs,
   onRemoveSongs,
+  initialStep,
 }: AddServiceItemModalProps) {
   const titleId = useId();
   const [step, setStep] = useState<Step>("picker");
@@ -82,8 +86,8 @@ export default function AddServiceItemModal({
   }, []);
 
   useEffect(() => {
-    if (open) setStep("picker");
-  }, [open]);
+    if (open) setStep(initialStep ?? "picker");
+  }, [open, initialStep]);
 
   useEffect(() => {
     if (step !== "song") requestCloseRef.current = onClose;
@@ -102,12 +106,12 @@ export default function AddServiceItemModal({
           ? "w-full max-w-lg max-h-[min(640px,calc(100vh-2rem))] rounded-2xl flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
           : compact
             ? "w-full max-w-2xl rounded-xl flex flex-col shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
-            : "w-full max-w-none h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] rounded-2xl flex flex-col bg-surface-container/70 backdrop-blur-2xl border border-white/10"
+            : "w-full max-w-none h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] rounded-2xl flex flex-col bg-surface-container/70 backdrop-blur-sm border border-white/10"
       }
       backdropClassName={
         compact
           ? "bg-black/60 backdrop-blur-sm"
-          : "bg-black/60 backdrop-blur-xl"
+          : "bg-black/60 backdrop-blur-sm"
       }
     >
       {step === "picker" ? (
@@ -125,7 +129,7 @@ export default function AddServiceItemModal({
               className="text-on-surface-variant hover:text-primary transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 rounded-full p-1"
               aria-label="Close"
             >
-              <span className="material-symbols-outlined">close</span>
+              <Icon name="close" />
             </button>
           </div>
           <div className="p-6">
@@ -140,9 +144,7 @@ export default function AddServiceItemModal({
                   <div
                     className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${option.iconClass}`}
                   >
-                    <span className="material-symbols-outlined filled text-[24px]">
-                      {option.icon}
-                    </span>
+                    <Icon name={option.icon} className="filled text-[24px]" />
                   </div>
                   <div>
                     <h3 className="text-[18px] font-semibold text-on-surface mb-1">

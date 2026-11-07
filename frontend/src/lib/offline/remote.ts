@@ -176,6 +176,8 @@ const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
     "service_at",
     "est_duration_seconds",
     "archived_at",
+    // Optional: writeRows drops it if the backend migration is not applied yet.
+    "stage_background",
     "created_at",
     "updated_at",
   ],
@@ -419,6 +421,10 @@ async function pushLocalRow(
   stack.add(key);
   const row = await getRow(churchId, table, id);
   if (!row) return false;
+  // Already on the server: nothing to push. Re-upserting it would re-run the
+  // INSERT policy, which fails for roles that may reference but not edit the
+  // parent (e.g. an operator's live session pointing at a setlist).
+  if (!row.__localOnly) return true;
   const prepared = await prepareRow(churchId, table, { ...row }, stack);
   await writeRows(table, [prepared], "upsert");
   await markPushed(churchId, table, id);
@@ -571,12 +577,31 @@ function sortOutbox(items: OutboxItem[]) {
   });
 }
 
-export async function pushOutbox(churchId: string) {
+/** The server refused the write for this user's role; retrying can never succeed. */
+function isPermissionDenied(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /row-level security|permission denied|forbidden/i.test(message);
+}
+
+function outboxRowIds(item: OutboxItem) {
+  const { op } = item;
+  if (op.type === "upsert") return [op.row.id];
+  if (op.type === "delete") return [op.rowId];
+  return op.rows.map((row) => row.id);
+}
+
+export type PushResult = {
+  /** Changes the server refused for this user's role; dropped and reverted to the server copy. */
+  rejected: { table: TableName; message: string }[];
+};
+
+export async function pushOutbox(churchId: string): Promise<PushResult> {
   await requeueLocalOnly(churchId);
+  const rejected: PushResult["rejected"] = [];
   let lastError = "";
   while (true) {
     const items = sortOutbox(await getOutbox(churchId));
-    if (!items.length) return;
+    if (!items.length) return { rejected };
     let progressed = false;
     lastError = "";
     for (const item of items) {
@@ -592,6 +617,20 @@ export async function pushOutbox(churchId: string) {
             });
           }
           await dequeueOutboxItem(churchId, item.id);
+          progressed = true;
+          continue;
+        }
+        if (isPermissionDenied(err)) {
+          // Drop it so it stops blocking every later backup, and clear the
+          // local flag so the next pull restores the server's version.
+          for (const id of outboxRowIds(item)) {
+            await markPushed(churchId, item.op.table, id);
+          }
+          await dequeueOutboxItem(churchId, item.id);
+          rejected.push({
+            table: item.op.table,
+            message: err instanceof Error ? err.message : "Permission denied.",
+          });
           progressed = true;
           continue;
         }

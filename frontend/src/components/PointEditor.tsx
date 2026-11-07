@@ -4,6 +4,7 @@ import {
   editableToStored,
   storedToEditable,
 } from "../lib/sermonMarkup";
+import Icon from "./Icon";
 
 type PointEditorProps = {
   value: string;
@@ -122,7 +123,7 @@ export default function PointEditor({
             marks.bold ? "bg-primary text-on-primary" : "bg-white/5 hover:bg-white/10 text-on-surface"
           }`}
         >
-          <span className="material-symbols-outlined text-[18px]">format_bold</span>
+          <Icon name="format_bold" className="text-[18px]" />
         </button>
         <button
           type="button"
@@ -137,7 +138,7 @@ export default function PointEditor({
               : "bg-white/5 hover:bg-white/10 text-on-surface"
           }`}
         >
-          <span className="material-symbols-outlined text-[18px]">format_italic</span>
+          <Icon name="format_italic" className="text-[18px]" />
         </button>
         <button
           type="button"
@@ -152,7 +153,7 @@ export default function PointEditor({
               : "bg-white/5 hover:bg-white/10 text-on-surface"
           }`}
         >
-          <span className="material-symbols-outlined text-[18px]">format_underlined</span>
+          <Icon name="format_underlined" className="text-[18px]" />
         </button>
         <span className="w-px h-5 bg-white/10 mx-1" />
         {POINT_COLORS.map((color) => (
@@ -175,7 +176,7 @@ export default function PointEditor({
           className="w-8 h-8 rounded-md bg-white/5 hover:bg-white/10 flex items-center justify-center cursor-pointer"
           title="Custom color"
         >
-          <span className="material-symbols-outlined text-[18px]">palette</span>
+          <Icon name="palette" className="text-[18px]" />
           <input
             type="color"
             className="sr-only"

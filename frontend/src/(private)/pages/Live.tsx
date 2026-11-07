@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import CueStage from "../../components/CueStage";
 import LiveEditWorkspace from "../../components/LiveEditWorkspace";
 import StageBackdrop from "../../components/StageBackdrop";
 import StageBackgroundPicker from "../../components/StageBackgroundPicker";
 import VerseOverlay from "../../components/VerseOverlay";
-import { PageSkeleton } from "../../components/Skeleton";
+import { ConsoleSkeleton } from "../../components/Skeleton";
 import TextSizePicker from "../../components/TextSizePicker";
 import TextStylePicker from "../../components/TextStylePicker";
 import {
@@ -16,10 +16,10 @@ import {
   getChurchSettings,
   getPresentation,
   getSetlist,
+  updateSetlistBackground,
   listSetlists,
   patchChurchSettings,
   patchFromCue,
-  reorderSermonSlides,
   reorderSetlistItems,
   startPresentation,
   subscribePresentation,
@@ -54,6 +54,7 @@ import { asStageFont, DEFAULT_STAGE_FONT, STAGE_FONTS } from "../../lib/stageFon
 import {
   asStageBackground,
   DEFAULT_STAGE_BACKGROUND,
+  stageBackgroundDef,
   stageUsesDarkText,
   type StageBackgroundId,
 } from "../../lib/stageBackgrounds";
@@ -71,11 +72,16 @@ import ScriptureStyleControls from "../../components/ScriptureStyleControls";
 import { usePrefs } from "../../lib/PrefsContext";
 import { useToast } from "../../lib/ToastContext";
 import type { LiveCue, Presentation, Setlist } from "../../lib/types";
+import Icon from "../../components/Icon";
+import { Badge, Button, Kbd, SectionLabel } from "../../components/ui";
+import ConsoleSection from "../../components/live/ConsoleSection";
+import RunOfShow, { itemIcon } from "../../components/live/RunOfShow";
+import SlideStrip from "../../components/live/SlideStrip";
+import ConfirmDialog from "../../components/modals/ConfirmDialog";
 
 export default function Live() {
   const toast = useToast();
   const { t } = usePrefs();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const pageActive = usePageActive();
   const requestedId = params.get("presentation");
@@ -92,7 +98,12 @@ export default function Live() {
   const [font, setFont] = useState(DEFAULT_STAGE_FONT);
   const [lyricSize, setLyricSize] = useState(DEFAULT_STAGE_TEXT_SIZE);
   const [lyricStyle, setLyricStyle] = useState<LyricTextStyle>(DEFAULT_LYRIC_TEXT_STYLE);
-  const [stageBg, setStageBg] = useState<StageBackgroundId>(DEFAULT_STAGE_BACKGROUND);
+  // Church-wide default; a setlist may override it with its own background.
+  const [churchBg, setChurchBg] = useState<StageBackgroundId>(DEFAULT_STAGE_BACKGROUND);
+  const [bgScope, setBgScope] = useState<"setlist" | "church" | null>(null);
+  const stageBg: StageBackgroundId = setlist?.stage_background
+    ? asStageBackground(setlist.stage_background)
+    : churchBg;
   const [transitionStyle, setTransitionStyle] = useState<StageTransition>("dissolve");
   const [chords, setChords] = useState<ChordDisplay>(readChordDisplay);
   const updateChords = (patch: Partial<ChordDisplay>) => {
@@ -105,7 +116,8 @@ export default function Live() {
   const [rosterDraft, setRosterDraft] = useState<RosterPayload | null>(null);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [editMode, setEditMode] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  // Stage settings accordion: closed by default, only one section open at a time.
+  const [openSection, setOpenSection] = useState<string | null>(null);
   const [hiddenDecks, setHiddenDecks] = useState<{ left: boolean; right: boolean }>(() => {
     try {
       return { left: false, right: false, ...JSON.parse(localStorage.getItem("mc.liveDecks") || "{}") };
@@ -193,7 +205,7 @@ export default function Live() {
       setFont(asStageFont(settings?.default_font));
       setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
       setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
-      setStageBg(asStageBackground(settings?.stage_background));
+      setChurchBg(asStageBackground(settings?.stage_background));
       setTransitionStyle(asStageTransition(settings?.default_transition));
     } catch {
       setFont(DEFAULT_STAGE_FONT);
@@ -236,13 +248,15 @@ export default function Live() {
           setFont(asStageFont(settings?.default_font));
           setLyricSize(settings?.lyrics_text_size || DEFAULT_STAGE_TEXT_SIZE);
           setLyricStyle(parseLyricTextStyle(settings?.lyrics_text_style));
-          setStageBg(asStageBackground(settings?.stage_background));
+          setChurchBg(asStageBackground(settings?.stage_background));
           setTransitionStyle(asStageTransition(settings?.default_transition));
         })
         .catch(() => undefined);
     };
     const unsub = subscribeContent(reload);
-    const timer = window.setInterval(reload, 800);
+    // Content changes arrive via subscribeContent (BroadcastChannel / storage /
+    // desktop events). This is only a slow safety net, not the update path.
+    const timer = window.setInterval(reload, 10_000);
     return () => {
       unsub();
       window.clearInterval(timer);
@@ -294,17 +308,9 @@ export default function Live() {
   const liveIndex = displayPresentation ? cueIndexFor(displayPresentation, cues) : 0;
   const index = live ? liveIndex : previewIndex;
   const active: LiveCue | undefined = cues[index];
-  const nextCue = cues[index + 1];
-  const cueListRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const list = cueListRef.current;
-    const row = list?.querySelector<HTMLElement>(`[data-cue-index="${index}"]`);
-    if (!list || !row || !list.clientHeight) return;
-    const top = row.offsetTop - (list.clientHeight - row.offsetHeight) / 2;
-    list.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
-  }, [index, active?.id, cues.length]);
   const darkText = stageUsesDarkText(stageBg);
+  const setlistHasBg = Boolean(setlist?.stage_background);
+  const backgroundScope = bgScope ?? (setlistHasBg ? "setlist" : "church");
   const transitionSec = ((displayPresentation?.transition_ms ?? 400) / 1000).toFixed(1);
   const currentItem = displaySetlist?.items?.find((row: { id: string }) => row.id === active?.itemId);
   const currentSlide = currentItem?.sermon?.slides?.find(
@@ -341,7 +347,7 @@ export default function Live() {
   };
 
   const toggleSection = (id: string) => {
-    setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
+    setOpenSection((prev) => (prev === id ? null : id));
   };
 
   const patchPresentation = useCallback(
@@ -354,7 +360,7 @@ export default function Live() {
 
   const patchSettings = useCallback(
     (patch: any) => {
-      if (patch.stage_background) setStageBg(asStageBackground(patch.stage_background));
+      if (patch.stage_background) setChurchBg(asStageBackground(patch.stage_background));
       if (patch.default_font) setFont(asStageFont(patch.default_font));
       if (patch.lyrics_text_size) setLyricSize(patch.lyrics_text_size);
       if (patch.lyrics_text_style) setLyricStyle(parseLyricTextStyle(patch.lyrics_text_style));
@@ -363,66 +369,6 @@ export default function Live() {
       );
     },
     [],
-  );
-
-  const { bind: bindCue } = useHoldReorder(
-    "live-cues",
-    (fromId, toId) => {
-      const from = cues.find((row) => row.id === fromId);
-      const to = cues.find((row) => row.id === toId);
-      if (!from || !to || !displaySetlist) return;
-      if (
-        from.itemId === to.itemId &&
-        from.slideId &&
-        to.slideId &&
-        from.slideId !== to.slideId
-      ) {
-        const item = displaySetlist.items?.find((row) => row.id === from.itemId);
-        if (!item?.sermon_id || !item.sermon) return;
-        const ids = [...(item.sermon.slides ?? [])]
-          .sort((a, b) => a.sort_order - b.sort_order)
-          .map((row) => row.id);
-        const fromIndex = ids.indexOf(from.slideId);
-        const toIndex = ids.indexOf(to.slideId);
-        if (fromIndex === -1 || toIndex === -1) return;
-
-        const nextIds = moveItem(ids, fromIndex, toIndex);
-        const nextSlides = moveItem([...(item.sermon.slides ?? [])], fromIndex, toIndex);
-
-        // Optimistic update for sermon slides in the setlist item
-        const nextItems = (displaySetlist.items ?? []).map((row) =>
-          row.id === item.id
-            ? { ...row, sermon: { ...row.sermon!, slides: nextSlides } }
-            : row,
-        );
-        applySetlist({ ...displaySetlist, items: nextItems });
-
-        void reorderSermonSlides(item.sermon_id, nextIds)
-          .then(refreshSetlist)
-          .catch((err) =>
-            setError(err instanceof Error ? err.message : "Could not reorder points."),
-          );
-        return;
-      }
-      if (from.itemId === to.itemId) return;
-      const ids = (displaySetlist.items ?? []).map((row) => row.id);
-      const fromIndex = ids.indexOf(from.itemId);
-      const toIndex = ids.indexOf(to.itemId);
-      if (fromIndex === -1 || toIndex === -1) return;
-
-      const nextIds = moveItem(ids, fromIndex, toIndex);
-      const nextItems = moveItem([...(displaySetlist.items ?? [])], fromIndex, toIndex);
-
-      // Optimistic update for setlist items
-      applySetlist({ ...displaySetlist, items: nextItems });
-
-      void reorderSetlistItems(displaySetlist.id, nextIds)
-        .then(applySetlist)
-        .catch((err) =>
-          setError(err instanceof Error ? err.message : "Could not reorder the setlist."),
-        );
-    },
-    live,
   );
 
   const { bind: bindItem } = useHoldReorder(
@@ -691,6 +637,8 @@ export default function Live() {
     }
   };
 
+  const [confirmEnd, setConfirmEnd] = useState(false);
+
   const stopLive = async () => {
     if (!presentation) return;
     setBusy(true);
@@ -722,601 +670,589 @@ export default function Live() {
     return `${h}:${m}:${sec}`;
   };
 
-  if (loading) return <PageSkeleton />;
+  if (loading) return <ConsoleSkeleton />;
+
+  const items = displaySetlist?.items ?? [];
+  const verseOpen = Boolean(presentation?.verse_overlay_ref);
+  const fontLabel = (id: string) => STAGE_FONTS.find((row) => row.id === id)?.label ?? id;
+  const textSummary = verseOpen
+    ? fontLabel(displayPresentation?.verse_overlay_font || font || DEFAULT_STAGE_FONT)
+    : fontLabel(font);
+  const rosterWide = rosterActive && openSection === "roster";
 
   return (
-    <div className="bg-background text-on-surface font-sans overflow-hidden h-screen select-none">
-      <header className="fixed top-0 left-0 right-0 h-16 bg-surface/50 backdrop-blur-lg border-b border-white/5 flex items-center justify-between px-4 sm:px-6 z-50">
-        <div className="flex items-center gap-3 sm:gap-6 min-w-0">
-          <Link to="/dashboard" className="flex items-center gap-3 shrink-0">
-            <div className="w-8 h-8 rounded bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-              <span className="material-symbols-outlined filled text-on-primary text-[20px]">
-                movie_filter
-              </span>
+    <div className="bg-background text-on-surface font-sans overflow-hidden h-screen flex flex-col select-none">
+      {/* ── Top bar ─────────────────────────────────────────────────── */}
+      <header className="h-12 shrink-0 app-chrome border-b flex items-center gap-3 pl-2 pr-3 z-50">
+        <Link
+          to="/dashboard"
+          className="ui-btn ui-btn-ghost ui-btn-sm shrink-0"
+          title={t("live.backToDashboard")}
+        >
+          <Icon name="arrow_back" className="text-[15px]" />
+          <span className="sr-only xl:not-sr-only">{t("live.backToDashboard")}</span>
+        </Link>
+        <span className="h-5 w-px bg-white/10 shrink-0" aria-hidden />
+        <span
+          className="w-6 h-6 rounded-md bg-primary-container flex items-center justify-center shrink-0"
+          title="MinistryCast"
+        >
+          <Icon name="movie_filter" className="filled text-on-primary text-[14px]" />
+        </span>
+
+        <div className="min-w-0 flex-1 flex items-center gap-3">
+          {setlists.length === 0 ? (
+            <span className="text-[13px] text-on-surface-variant truncate">
+              {t("live.noSetlists")}
+            </span>
+          ) : (
+            <div
+              role="tablist"
+              aria-label={t("live.setlist")}
+              className="ui-tabs min-w-0 max-w-full overflow-x-auto [scrollbar-width:none]"
+              title={live ? "End the presentation to switch setlists" : undefined}
+            >
+              {setlists.map((row) => {
+                const selected = setlistId === row.id;
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    disabled={live && !selected}
+                    onClick={() => {
+                      if (live) return;
+                      setSetlistId(row.id);
+                      setParams(
+                        (prev) => {
+                          const next = new URLSearchParams(prev);
+                          next.set("setlist", row.id);
+                          return next;
+                        },
+                        { replace: true },
+                      );
+                    }}
+                    className="ui-tab shrink-0 disabled:opacity-40"
+                  >
+                    <span className="max-w-[160px] truncate">{row.name}</span>
+                  </button>
+                );
+              })}
             </div>
-            <h1 className="hidden sm:block font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary text-xl">
-              MinistryCast
-            </h1>
-          </Link>
-          <div className="hidden md:block h-6 w-px bg-white/10" />
-          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <div className="flex items-center gap-2 px-3 py-1 bg-primary/10 rounded-full border border-primary/20">
-              <div
-                className={`w-2 h-2 rounded-full ${live ? "bg-primary live-pulse" : "bg-white/30"}`}
+          )}
+          <span className="shrink-0 flex items-center gap-2">
+            <Badge tone={live ? "danger" : "neutral"}>
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${live ? "bg-error live-pulse" : "bg-outline"}`}
+                aria-hidden
               />
-              <span className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary">
-                {live ? t("live.onAir") : t("live.standby")}
-              </span>
-            </div>
-            <span className="text-xs text-on-surface-variant font-mono">
+              {live ? t("live.onAir") : t("live.standby")}
+            </Badge>
+            <span
+              className="text-[12px] text-on-surface-variant font-mono tabular-nums"
+              title="Session time"
+            >
               {formatTime(elapsed)}
             </span>
-          </div>
+          </span>
         </div>
-        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-          <div className="hidden lg:flex items-center rounded-lg border border-white/10 overflow-hidden">
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className="hidden lg:flex items-center gap-0.5">
             <button
               type="button"
               onClick={() => toggleDeck("left")}
               aria-pressed={!hiddenDecks.left}
               title={hiddenDecks.left ? "Show setlist deck" : "Hide setlist deck"}
-              className={`p-2 transition-colors ${
-                hiddenDecks.left ? "text-on-surface-variant hover:bg-white/5" : "bg-white/10 text-on-surface"
-              }`}
+              className="ui-icon-btn"
             >
-              <span className="material-symbols-outlined text-[18px]">
-                {hiddenDecks.left ? "left_panel_open" : "left_panel_close"}
-              </span>
+              <Icon
+                name={hiddenDecks.left ? "left_panel_open" : "left_panel_close"}
+                className="text-[16px]"
+              />
             </button>
-            <div className="w-px h-5 bg-white/10" />
             <button
               type="button"
               onClick={() => toggleDeck("right")}
               aria-pressed={!hiddenDecks.right}
               title={hiddenDecks.right ? "Show controls deck" : "Hide controls deck"}
-              className={`hidden xl:block p-2 transition-colors ${
-                hiddenDecks.right ? "text-on-surface-variant hover:bg-white/5" : "bg-white/10 text-on-surface"
-              }`}
+              className="ui-icon-btn hidden xl:inline-flex"
             >
-              <span className="material-symbols-outlined text-[18px]">
-                {hiddenDecks.right ? "right_panel_open" : "right_panel_close"}
-              </span>
+              <Icon
+                name={hiddenDecks.right ? "right_panel_open" : "right_panel_close"}
+                className="text-[16px]"
+              />
             </button>
           </div>
-          {live ? (
-            <button
-              type="button"
-              onClick={() => setEditMode(true)}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg border transition-all active:scale-95 bg-surface-container-high border-white/10 hover:bg-white/5 text-on-surface"
-            >
-              <span className="material-symbols-outlined text-[18px]">edit</span>
-              <span className="text-xs font-semibold hidden sm:inline">
+          {live && displayPresentation ? (
+            <>
+              <span className="hidden lg:block h-5 w-px bg-white/10 mx-1" aria-hidden />
+              <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditMode(true)}>
                 {t("live.editMode")}
-              </span>
-            </button>
-          ) : null}
-          {live && displayPresentation ? (
-            <button
-              type="button"
-              onClick={() => void openProjectorWindow(displayPresentation.id)}
-              className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-container-high border border-white/10 hover:bg-white/5 transition-all active:scale-95"
-            >
-              <span className="material-symbols-outlined text-[18px]">
-                present_to_all
-              </span>
-              <span className="text-xs font-medium">Open Output</span>
-            </button>
-          ) : null}
-          {live && displayPresentation ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void stopLive()}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-error/15 text-error hover:brightness-110 transition-all active:scale-95 font-semibold disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-[18px]">
-                stop_circle
-              </span>
-              <span className="text-xs font-medium hidden sm:inline">
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="present_to_all"
+                className="hidden sm:inline-flex"
+                onClick={() => void openProjectorWindow(displayPresentation.id)}
+              >
+                Open Output
+              </Button>
+              <span className="h-5 w-px bg-white/10 mx-1" aria-hidden />
+              <Button
+                size="sm"
+                variant="danger"
+                icon="stop_circle"
+                disabled={busy}
+                onClick={() => setConfirmEnd(true)}
+              >
                 {t("live.endPresentation")}
-              </span>
-            </button>
+              </Button>
+            </>
           ) : (
-            <button
-              type="button"
-              disabled={busy || !setlistId}
-              onClick={() => void goLive()}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-primary text-on-primary hover:brightness-110 transition-all active:scale-95 font-semibold disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined text-[18px]">
-                play_circle
-              </span>
-              <span className="text-xs font-medium hidden sm:inline">
+            <>
+              <span className="h-5 w-px bg-white/10 mx-1" aria-hidden />
+              <Button
+                size="sm"
+                variant="primary"
+                icon="play_circle"
+                disabled={busy || !setlistId}
+                onClick={() => void goLive()}
+              >
                 {busy ? t("live.starting") : t("live.goLive")}
-              </span>
-            </button>
+              </Button>
+            </>
           )}
         </div>
       </header>
 
-      <main className="pt-16 h-screen flex overflow-hidden">
-        <aside className={`${hiddenDecks.left ? "hidden" : "hidden lg:flex"} w-[280px] border-r border-white/5 bg-surface-container-lowest/50 flex-col h-full overflow-y-auto custom-scrollbar shrink-0`}>
-          <div className="p-4 border-b border-white/5 bg-surface-container-low shrink-0">
-            <h3 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant mb-2">
+      <main className="flex-1 min-h-0 flex overflow-hidden">
+        {/* ── Left rail: run of show ──────────────────────────────────── */}
+        <aside
+          className={`${
+            hiddenDecks.left ? "hidden" : "hidden lg:flex"
+          } w-[260px] shrink-0 flex-col border-r border-white/5 bg-surface-container-lowest`}
+        >
+          <div className="h-10 shrink-0 flex items-center justify-between px-4 border-b border-white/5">
+            <h2 className="text-[12px] font-medium text-on-surface-variant">
               {t("live.setlist")}
-            </h3>
-            <div
-              className="flex flex-col gap-1 max-h-40 overflow-y-auto custom-scrollbar"
-              role="tablist"
-              aria-label={t("live.setlist")}
-            >
-              {setlists.length === 0 ? (
-                <p className="text-sm text-on-surface-variant">{t("live.noSetlists")}</p>
-              ) : (
-                setlists.map((row) => {
-                  const selected = setlistId === row.id;
-                  return (
-                    <button
-                      key={row.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={selected}
-                      disabled={live}
-                      onClick={() => {
-                        setSetlistId(row.id);
-                        setParams(
-                          (prev) => {
-                            const next = new URLSearchParams(prev);
-                            next.set("setlist", row.id);
-                            return next;
-                          },
-                          { replace: true },
-                        );
-                      }}
-                      className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors disabled:opacity-60 ${
-                        selected
-                          ? "bg-primary/15 text-primary border border-primary/30 font-semibold"
-                          : "text-on-surface-variant hover:bg-white/5 border border-transparent"
-                      }`}
-                    >
-                      {row.name}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-            <h2 className="text-xl font-semibold text-primary truncate mt-3">
-              {active?.songTitle || active?.title || setlist?.name || "Empty setlist"}
             </h2>
-            <div className="flex gap-2 mt-2">
-              {active?.musicalKey ? (
-                <span className="px-2 py-0.5 rounded bg-white/5 text-[10px] font-bold border border-white/10">
-                  {active.musicalKey}
-                </span>
-              ) : null}
-              {active?.bpm ? (
-                <span className="px-2 py-0.5 rounded bg-white/5 text-[10px] font-bold border border-white/10">
-                  {active.bpm} BPM
-                </span>
-              ) : null}
-            </div>
+            <span className="text-[11px] text-on-surface-variant tabular-nums">
+              {items.length}
+            </span>
           </div>
-
-          <div ref={cueListRef} className="relative flex-1 overflow-y-auto custom-scrollbar">
-            <div className="p-2 space-y-2">
-              {cues.map((item, cueIndex) => {
-                const isSelected = cueIndex === index;
-                const isActive = live && isSelected;
-                const accent =
-                  item.kind === "scripture"
-                    ? "primary"
-                    : item.kind === "sermon"
-                      ? "tertiary"
-                      : item.kind === "roster"
-                        ? "secondary"
-                        : "primary";
-                const hold = bindCue(item.id);
-                return (
-                  <div
-                    key={item.id}
-                    {...hold}
-                    data-cue-index={cueIndex}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectCue(cueIndex)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") selectCue(cueIndex);
-                    }}
-                    className={`w-full text-left relative p-3 rounded-lg transition-colors border select-none touch-none cursor-grab active:cursor-grabbing ${
-                      isActive
-                        ? accent === "tertiary"
-                          ? "border-tertiary bg-tertiary/10"
-                          : accent === "secondary"
-                            ? "border-secondary bg-secondary/10"
-                            : "bg-primary/10 border-l-4 border-primary border-y-transparent border-r-transparent"
-                        : isSelected
-                          ? "border-white/20 bg-white/5"
-                          : "border-white/5 hover:bg-white/5"
-                    }`}
-                  >
-                    <div className="absolute top-2 right-3 flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-on-surface-variant/40 tabular-nums">
-                        #{cueIndex + 1}
-                      </span>
-                      <span className="text-[10px] font-bold text-primary/50 uppercase tracking-wider">
-                        {item.tag}
-                      </span>
-                    </div>
-                    <div className="text-[10px] font-semibold tracking-wider mb-1 text-on-surface-variant">
-                      {item.sectionLabel || item.label}
-                    </div>
-                    <p className={`text-sm leading-snug text-on-surface line-clamp-2 ${item.kind === "sermon" ? "font-bold" : ""}`}>
-                      {item.heading && item.kind === "lyric"
-                        ? `${item.heading} · ${item.preview}`
-                        : item.preview}
-                    </p>
-                  </div>
-                );
-              })}
-              {cues.length === 0 ? (
-                <p className="px-3 py-8 text-sm text-on-surface-variant">
-                  Add songs, sermons, scripture, or assignments to this setlist first.
-                </p>
-              ) : null}
-            </div>
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+            {items.length ? (
+              <RunOfShow
+                items={items}
+                cues={cues}
+                activeItemId={active?.itemId}
+                live={live}
+                onJump={selectCue}
+                bindItem={bindItem}
+              />
+            ) : (
+              <p className="px-4 py-6 text-[13px] text-on-surface-variant">
+                Add songs, sermons, scripture, or assignments to this setlist first.
+              </p>
+            )}
           </div>
-
-          <div className="shrink-0 border-t border-white/5 bg-surface-container-low">
-            <button
-              type="button"
-              onClick={() => navigate("/dashboard")}
-              className="w-full flex items-center gap-2 px-4 py-3 text-sm text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-colors border-b border-white/5"
-            >
-              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-              <span className="font-medium">{t("live.backToDashboard")}</span>
-            </button>
-            <div className="p-4 flex justify-between items-center">
-              <button
-                type="button"
-                disabled={!cues.length}
-                onClick={() => selectCue(index - 1)}
-                className="p-2 rounded hover:bg-white/5 disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined">skip_previous</span>
-              </button>
-              <span className="text-xs text-on-surface-variant">
-                Slide {cues.length ? index + 1 : 0} / {cues.length}
-              </span>
-              <button
-                type="button"
-                disabled={!cues.length}
-                onClick={() => selectCue(index + 1)}
-                className="p-2 rounded hover:bg-white/5 disabled:opacity-40"
-              >
-                <span className="material-symbols-outlined">skip_next</span>
-              </button>
-            </div>
-          </div>
+          <p className="shrink-0 border-t border-white/5 px-4 py-2.5 text-[11px] text-on-surface-variant">
+            {live ? "Hold and drag an item to reorder." : "Click an item to preview it."}
+          </p>
         </aside>
 
-        <section className="flex-1 flex flex-col bg-surface-container-lowest p-3 sm:p-6 overflow-hidden min-w-0">
-          <button
-            type="button"
-            onClick={() => navigate("/dashboard")}
-            className="lg:hidden mb-3 self-start flex items-center gap-1.5 text-sm text-on-surface-variant hover:text-on-surface"
-          >
-            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-            {t("live.backToDashboard")}
-          </button>
+        {/* ── Center: program preview, transport, slide strip ────────── */}
+        <section className="flex-1 min-w-0 flex flex-col px-4 sm:px-6 py-4 bg-background">
           {error ? (
-            <p className="mb-3 text-sm text-[#ffb4ab]">{error}</p>
+            <p role="alert" className="shrink-0 mb-2 text-[13px] text-error">
+              {error}
+            </p>
           ) : null}
-          <div className="flex-1 relative flex flex-col gap-4 sm:gap-6 min-h-0">
-            <div className="flex-1 rounded-xl overflow-hidden relative border-2 border-primary shadow-[0_0_40px_rgba(155,203,255,0.15)] min-h-[240px]">
-              <StageBackdrop id={stageBg} />
-              <div className="absolute inset-0">
-                {presentation?.is_blackout ? (
-                  <div className="h-full w-full flex items-center justify-center">
-                    <p className="text-on-surface-variant uppercase tracking-[0.3em] text-sm">
-                      Blackout
-                    </p>
-                  </div>
-                ) : presentation?.show_logo ? (
-                  <div className="h-full w-full flex items-center justify-center">
-                    <span className="material-symbols-outlined filled text-primary text-7xl">
-                      church
-                    </span>
-                  </div>
-                ) : (
-                  <div
-                    key={active?.id ?? "empty"}
-                    className={`h-full w-full ${lyricTransitionClass(transitionStyle, presentation?.transition_ms ?? 400)}`}
-                    style={{ animationDuration: `${presentation?.transition_ms ?? 400}ms` }}
-                  >
-                    <CueStage
-                      cue={active}
-                      paddingTop={52}
-                      font={font}
-                      lyricSize={lyricSize}
-                      lyricStyle={lyricStyle}
-                      chords={chords}
-                      darkText={darkText}
-                      onVerseClick={live ? openVerse : undefined}
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1 rounded font-bold text-[10px] uppercase shadow-lg z-10 bg-primary text-on-primary">
-                {live ? "On Air Preview" : "Standby Preview"}
-              </div>
-              {displayPresentation?.verse_overlay_ref ? (
-                <VerseOverlay
-                  reference={displayPresentation.verse_overlay_ref}
-                  translation={displayPresentation.verse_overlay_translation || "ceb"}
-                  font={
-                    displayPresentation.verse_overlay_font ||
-                    font ||
-                    DEFAULT_STAGE_FONT
-                  }
-                  textSize={
-                    displayPresentation.verse_overlay_text_size ||
-                    lyricSize ||
-                    DEFAULT_STAGE_TEXT_SIZE
-                  }
-                  textStyle={
-                    displayPresentation.verse_overlay_text_style || "bold"
-                  }
-                  color={displayPresentation.verse_overlay_color || "black"}
-                  paddingTop={52}
-                  page={displayPresentation.verse_overlay_page ?? 0}
-                  pageSize={displayPresentation.verse_overlay_take || 5}
-                  onPageChange={(next) => {
-                    patchPresentation({
-                      verse_overlay_page: next,
-                    });
-                  }}
-                  onPageSizeChange={(next) => {
-                    patchPresentation({
-                      verse_overlay_take: next,
-                    });
-                  }}
-                  onReferenceChange={(next) => {
-                    patchPresentation({
-                      verse_overlay_ref: next,
-                      verse_overlay_page: 0,
-                    });
-                  }}
-                  onClose={closeVerse}
-                />
-              ) : null}
-            </div>
 
-            <div className="h-auto sm:h-48 flex flex-col sm:flex-row gap-3 sm:gap-6 shrink-0">
-              <div className="flex-1 bg-surface-container rounded-xl border border-white/10 relative overflow-hidden min-h-[120px]">
-                <div className="absolute inset-0 p-4 flex flex-col justify-center items-center text-center">
-                  <span className="text-[10px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant absolute top-3 left-4">
-                    Next Preview
+          {/* Preview, transport and strip share one width so their edges line up. */}
+          <div className="flex-1 min-h-[320px] [container-type:size]">
+            <div
+              className="h-full flex flex-col items-center justify-center gap-3 [--stage-w:min(100cqw,calc((100cqh-148px)*16/9))] [--rail-w:max(var(--stage-w),min(100cqw,520px))]"
+            >
+              <div
+                className={`relative shrink-0 aspect-video w-[var(--stage-w)] rounded-xl overflow-hidden border ${
+                  live ? "border-error/50" : "border-white/10"
+                }`}
+              >
+                <StageBackdrop id={stageBg} />
+                <div className="absolute inset-0">
+                  {presentation?.is_blackout ? (
+                    <div className="h-full w-full flex items-center justify-center bg-black">
+                      <p className="text-white/50 uppercase tracking-[0.3em] text-sm">Blackout</p>
+                    </div>
+                  ) : presentation?.show_logo ? (
+                    <div className="h-full w-full flex items-center justify-center">
+                      <Icon name="church" className="filled text-primary text-7xl" />
+                    </div>
+                  ) : (
+                    <div
+                      key={active?.id ?? "empty"}
+                      className={`h-full w-full ${lyricTransitionClass(transitionStyle, presentation?.transition_ms ?? 400)}`}
+                      style={{ animationDuration: `${presentation?.transition_ms ?? 400}ms` }}
+                    >
+                      <CueStage
+                        cue={active}
+                        paddingTop={44}
+                        font={font}
+                        lyricSize={lyricSize}
+                        lyricStyle={lyricStyle}
+                        chords={chords}
+                        darkText={darkText}
+                        onVerseClick={live ? openVerse : undefined}
+                      />
+                    </div>
+                  )}
+                </div>
+                <span
+                  className={`absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[11px] font-medium ${
+                    live ? "bg-error text-white" : "bg-black/60 text-white/85"
+                  }`}
+                >
+                  {live ? "On Air Preview" : "Standby Preview"}
+                </span>
+                {displayPresentation?.verse_overlay_ref ? (
+                  <VerseOverlay
+                    reference={displayPresentation.verse_overlay_ref}
+                    translation={displayPresentation.verse_overlay_translation || "ceb"}
+                    font={displayPresentation.verse_overlay_font || font || DEFAULT_STAGE_FONT}
+                    textSize={
+                      displayPresentation.verse_overlay_text_size ||
+                      lyricSize ||
+                      DEFAULT_STAGE_TEXT_SIZE
+                    }
+                    textStyle={displayPresentation.verse_overlay_text_style || "bold"}
+                    color={displayPresentation.verse_overlay_color || "black"}
+                    paddingTop={44}
+                    page={displayPresentation.verse_overlay_page ?? 0}
+                    pageSize={displayPresentation.verse_overlay_take || 5}
+                    onPageChange={(next) => {
+                      patchPresentation({ verse_overlay_page: next });
+                    }}
+                    onPageSizeChange={(next) => {
+                      patchPresentation({ verse_overlay_take: next });
+                    }}
+                    onReferenceChange={(next) => {
+                      patchPresentation({ verse_overlay_ref: next, verse_overlay_page: 0 });
+                    }}
+                    onClose={closeVerse}
+                  />
+                ) : null}
+              </div>
+
+              {/* Transport */}
+              <div className="shrink-0 w-[var(--rail-w)] grid grid-cols-[1fr_auto_1fr] items-center gap-3 h-9">
+                <div className="min-w-0 flex items-center gap-2">
+                  {currentItem ? (
+                    <Icon
+                      name={itemIcon(currentItem.item_type)}
+                      className="text-[15px] text-on-surface-variant shrink-0"
+                    />
+                  ) : null}
+                  <span className="min-w-0 truncate text-[13px] font-medium text-on-surface">
+                    {active?.songTitle || currentItem?.title || active?.title || setlist?.name || "Empty setlist"}
                   </span>
-                  <p className="text-lg sm:text-xl font-semibold text-on-surface-variant scale-95 opacity-70">
-                    {nextCue?.preview ?? "End of setlist"}
-                  </p>
+                  {active?.musicalKey ? <Badge>{active.musicalKey}</Badge> : null}
+                  {active?.bpm ? <Badge>{active.bpm} BPM</Badge> : null}
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={!cues.length || index <= 0}
+                    onClick={() => selectCue(index - 1)}
+                    aria-label="Previous slide"
+                    title="Previous slide (←)"
+                    className="ui-icon-btn w-8 h-8"
+                  >
+                    <Icon name="skip_previous" className="text-[18px]" />
+                  </button>
+                  <span className="min-w-[96px] text-center text-[13px] text-on-surface tabular-nums">
+                    Slide {cues.length ? index + 1 : 0} / {cues.length}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!cues.length}
+                    onClick={() => selectCue(index + 1)}
+                    aria-label="Next slide"
+                    title="Next slide (→ or Space)"
+                    className="ui-icon-btn w-8 h-8"
+                  >
+                    <Icon name="skip_next" className="text-[18px]" />
+                  </button>
+                </div>
+                <div className="min-w-0 hidden md:flex items-center justify-end gap-1.5 text-[11px] text-on-surface-variant">
+                  {verseOpen && live ? (
+                    <>
+                      <Kbd>Esc</Kbd>
+                      <span>close verse</span>
+                    </>
+                  ) : (
+                    <>
+                      <Kbd>←</Kbd>
+                      <Kbd>→</Kbd>
+                      <span>or</span>
+                      <Kbd>Space</Kbd>
+                      <span>to step</span>
+                    </>
+                  )}
                 </div>
               </div>
-              <div className="w-full sm:w-64 glass-panel rounded-xl p-4 flex flex-col gap-2 shrink-0">
-                <span className="text-[10px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-                  Slide Progress
-                </span>
-                <div className="flex-1 flex flex-col justify-center gap-1">
-                  <div className="h-2 rounded bg-primary/20 w-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary transition-all duration-500"
-                      style={{
-                        width: cues.length
-                          ? `${((index + 1) / cues.length) * 100}%`
-                          : "0%",
-                      }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-[10px] text-on-surface-variant font-mono">
-                    <span>
-                      {index + 1}/{cues.length || 0}
-                    </span>
-                    <span>{setlist?.name ?? ""}</span>
-                  </div>
-                </div>
+
+              {/* Slides of the current item */}
+              <div className="shrink-0 w-[var(--rail-w)]">
+                {cues.length ? (
+                  <SlideStrip cues={cues} index={index} onSelect={selectCue} />
+                ) : (
+                  <p className="h-[84px] flex items-center justify-center rounded-lg border border-dashed border-white/10 text-[13px] text-on-surface-variant">
+                    No slides yet. Add songs, sermons, scripture, or assignments to this setlist first.
+                  </p>
+                )}
               </div>
             </div>
           </div>
         </section>
 
+        {/* ── Right rail: output + stage settings ─────────────────────── */}
         <aside
-          className={`${hiddenDecks.right ? "hidden" : "hidden xl:flex"} border-l border-white/5 bg-surface-container-lowest/50 flex-col p-4 gap-6 h-full overflow-y-auto custom-scrollbar shrink-0 transition-[width] duration-200 ${
-            rosterActive ? "w-[min(560px,46vw)]" : "w-[320px]"
+          className={`${
+            hiddenDecks.right ? "hidden" : "hidden xl:flex"
+          } shrink-0 flex-col border-l border-white/5 bg-surface-container-lowest overflow-y-auto custom-scrollbar transition-[width] duration-200 ${
+            rosterWide ? "w-[min(560px,46vw)]" : "w-[300px]"
           }`}
         >
-          {!live ? (
-            <p className="text-[11px] leading-snug text-on-surface-variant rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-              Standby is preview only. Press Go Live to edit slides, assignments, and output.
-            </p>
-          ) : null}
-
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              disabled={!live}
-              onClick={() => {
-                if (!displayPresentation) return;
-                patchPresentation({
-                  is_blackout: !displayPresentation.is_blackout,
-                  show_logo: displayPresentation.is_blackout ? displayPresentation.show_logo : false,
-                });
-              }}
-              className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all active:scale-95 disabled:opacity-40 ${
-                displayPresentation?.is_blackout
-                  ? "border-error bg-error/20"
-                  : "border-error/20 bg-error/10 hover:bg-error/20"
-              }`}
-            >
-              <span className="material-symbols-outlined text-error text-[32px]">
-                block
-              </span>
-              <span className="text-[12px] font-semibold tracking-[0.05em] uppercase text-error">
-                Blackout
-              </span>
-            </button>
-            <button
-              type="button"
-              disabled={!live}
-              onClick={() => {
-                if (!displayPresentation) return;
-                patchPresentation({
-                  show_logo: !displayPresentation.show_logo,
-                  is_blackout: displayPresentation.show_logo ? displayPresentation.is_blackout : false,
-                });
-              }}
-              className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all active:scale-95 disabled:opacity-40 ${
-                displayPresentation?.show_logo
-                  ? "border-primary bg-primary/20"
-                  : "border-primary/20 bg-primary/10 hover:bg-primary/20"
-              }`}
-            >
-              <span className="material-symbols-outlined text-primary text-[32px]">
-                branding_watermark
-              </span>
-              <span className="text-[12px] font-semibold tracking-[0.05em] uppercase text-primary">
-                Logo
-              </span>
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => toggleSection("background")}
-              className="w-full flex items-center justify-between group"
-            >
-              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
-                Stage background
-              </h4>
-              <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["background"] ? "-rotate-90" : ""}`}>
-                expand_more
-              </span>
-            </button>
-            {!collapsedSections["background"] && (
-              <StageBackgroundPicker
-                compact
-                disabled={!live}
-                value={stageBg}
-                onChange={(next) => {
-                  if (!live) return;
-                  setStageBg(next);
-                  patchSettings({ stage_background: next });
-                }}
-              />
-            )}
-          </div>
-
-          {rosterActive && rosterDraft ? (
-            <div className="space-y-3">
+          <div className="px-4 pt-4 pb-4 border-b border-white/5">
+            <SectionLabel>Output</SectionLabel>
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => toggleSection("roster")}
-                className="w-full flex items-center justify-between group"
+                disabled={!live}
+                aria-pressed={Boolean(displayPresentation?.is_blackout)}
+                onClick={() => {
+                  if (!displayPresentation) return;
+                  patchPresentation({
+                    is_blackout: !displayPresentation.is_blackout,
+                    show_logo: displayPresentation.is_blackout ? displayPresentation.show_logo : false,
+                  });
+                }}
+                className={`h-11 flex items-center gap-2 px-3 rounded-lg border text-[13px] font-medium transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
+                  displayPresentation?.is_blackout
+                    ? "border-error bg-error/15 text-error"
+                    : "border-white/10 bg-surface-container text-on-surface enabled:hover:bg-surface-container-high"
+                }`}
               >
-                <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
-                  Assignments
-                </h4>
-                <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["roster"] ? "-rotate-90" : ""}`}>
-                  expand_more
-                </span>
+                <Icon name="block" className="text-[16px] shrink-0" />
+                <span className="flex-1 text-left">Blackout</span>
+                <Kbd>B</Kbd>
               </button>
-              {!collapsedSections["roster"] && (
-                <>
+              <button
+                type="button"
+                disabled={!live}
+                aria-pressed={Boolean(displayPresentation?.show_logo)}
+                onClick={() => {
+                  if (!displayPresentation) return;
+                  patchPresentation({
+                    show_logo: !displayPresentation.show_logo,
+                    is_blackout: displayPresentation.show_logo ? displayPresentation.is_blackout : false,
+                  });
+                }}
+                className={`h-11 flex items-center gap-2 px-3 rounded-lg border text-[13px] font-medium transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${
+                  displayPresentation?.show_logo
+                    ? "border-primary bg-primary/15 text-primary"
+                    : "border-white/10 bg-surface-container text-on-surface enabled:hover:bg-surface-container-high"
+                }`}
+              >
+                <Icon name="branding_watermark" className="text-[16px] shrink-0" />
+                <span className="flex-1 text-left">Logo</span>
+              </button>
+            </div>
+            {!live ? (
+              <p className="mt-3 text-[12px] leading-snug text-on-surface-variant">
+                Standby is preview only. Press Go Live to edit slides, assignments, and output.
+              </p>
+            ) : displayPresentation?.is_blackout || displayPresentation?.show_logo ? (
+              <p className="mt-3 text-[12px] leading-snug text-on-surface-variant">
+                {displayPresentation.is_blackout
+                  ? "The projector is black. Press Blackout again to bring slides back."
+                  : "The projector shows the logo. Press Logo again to bring slides back."}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="pt-4">
+            <div className="px-4">
+              <SectionLabel>Stage settings</SectionLabel>
+            </div>
+            <div className="border-t border-white/5">
+              <ConsoleSection
+                id="background"
+                title="Stage background"
+                icon="palette"
+                summary={`${stageBackgroundDef(stageBg).label}${setlistHasBg ? " · setlist" : ""}`}
+                open={openSection === "background"}
+                onToggle={toggleSection}
+              >
+                {setlist ? (
+                  <div className="mb-3">
+                    <p className="text-[11px] text-on-surface-variant mb-1.5">Apply to</p>
+                    <div role="radiogroup" aria-label="Apply background to" className="ui-tabs w-full">
+                      {(
+                        [
+                          ["setlist", "This setlist"],
+                          ["church", "Church default"],
+                        ] as const
+                      ).map(([scope, label]) => (
+                        <button
+                          key={scope}
+                          type="button"
+                          role="radio"
+                          aria-checked={backgroundScope === scope}
+                          aria-selected={backgroundScope === scope}
+                          disabled={!live}
+                          onClick={() => setBgScope(scope)}
+                          className="ui-tab flex-1 justify-center"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {backgroundScope === "setlist" && setlistHasBg ? (
+                      <button
+                        type="button"
+                        disabled={!live}
+                        onClick={() => {
+                          void updateSetlistBackground(setlist.id, null)
+                            .then((next) => next && applySetlist(next))
+                            .catch(() => toast.error("Could not reset the background."));
+                        }}
+                        className="mt-1.5 text-[11px] text-primary hover:underline disabled:opacity-40"
+                      >
+                        Reset to church default
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                <StageBackgroundPicker
+                  compact
+                  disabled={!live}
+                  value={stageBg}
+                  onChange={(next) => {
+                    if (!live) return;
+                    if (backgroundScope === "setlist" && setlist) {
+                      void updateSetlistBackground(setlist.id, next)
+                        .then((updated) => updated && applySetlist(updated))
+                        .catch(() => toast.error("Could not update the setlist background."));
+                      return;
+                    }
+                    setChurchBg(next);
+                    patchSettings({ stage_background: next });
+                  }}
+                />
+              </ConsoleSection>
+
+              {rosterActive && rosterDraft ? (
+                <ConsoleSection
+                  id="roster"
+                  title="Assignments"
+                  icon="assignment_ind"
+                  summary={`${rosterDraft.roles.length} roles`}
+                  open={openSection === "roster"}
+                  onToggle={toggleSection}
+                >
                   <input
                     value={rosterDraft.heading}
                     disabled={!live}
+                    aria-label="Assignments heading"
                     onChange={(event) => {
                       const next = { ...rosterDraft, heading: event.target.value };
                       setRosterDraft(next);
                       saveRoster(next);
                     }}
-                    className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+                    className="ui-input disabled:opacity-50"
                   />
                   <input
                     type="date"
                     value={rosterDraft.date}
                     disabled={!live}
+                    aria-label="Assignments date"
                     onChange={(event) => {
                       const next = { ...rosterDraft, date: event.target.value };
                       setRosterDraft(next);
                       saveRoster(next);
                     }}
-                    className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm"
+                    className="ui-input disabled:opacity-50"
                   />
                   <div className="space-y-2">
-                    {rosterDraft.roles.map((row, index) => {
-                      const hold = bindRosterRole(String(index));
+                    {rosterDraft.roles.map((row, roleIndex) => {
+                      const hold = bindRosterRole(String(roleIndex));
                       return (
-                      <div key={index} {...hold} className="flex gap-2 select-none touch-none cursor-grab active:cursor-grabbing">
-                        <span
-                          className="text-on-surface-variant hover:text-on-surface shrink-0 mt-1.5"
-                          aria-hidden
+                        <div
+                          key={roleIndex}
+                          {...hold}
+                          className="flex items-center gap-2 select-none touch-none cursor-grab active:cursor-grabbing"
                         >
-                          <span className="material-symbols-outlined text-[16px]">
-                            drag_indicator
+                          <span className="text-on-surface-variant shrink-0" aria-hidden>
+                            <Icon name="drag_indicator" className="text-[15px]" />
                           </span>
-                        </span>
-                        <input
-                          value={row.role}
-                          disabled={!live}
-                          data-hold-ignore
-                          onChange={(event) => {
-                            const roles = rosterDraft.roles.map((item, i) =>
-                              i === index ? { ...item, role: event.target.value } : item,
-                            );
-                            const next = { ...rosterDraft, roles };
-                            setRosterDraft(next);
-                            saveRoster(next);
-                          }}
-                          className="w-[46%] bg-surface-container-low border border-white/10 rounded-lg px-2 py-1.5 text-xs"
-                          placeholder="Role"
-                        />
-                        <input
-                          value={row.name}
-                          disabled={!live}
-                          data-hold-ignore
-                          onChange={(event) => {
-                            const roles = rosterDraft.roles.map((item, i) =>
-                              i === index ? { ...item, name: event.target.value } : item,
-                            );
-                            const next = { ...rosterDraft, roles };
-                            setRosterDraft(next);
-                            saveRoster(next);
-                          }}
-                          className="flex-1 bg-surface-container-low border border-white/10 rounded-lg px-2 py-1.5 text-xs"
-                          placeholder="Name"
-                        />
-                        <button
-                          type="button"
-                          disabled={!live || rosterDraft.roles.length <= 1}
-                          onClick={() => {
-                            const next = {
-                              ...rosterDraft,
-                              roles: rosterDraft.roles.filter((_, i) => i !== index),
-                            };
-                            setRosterDraft(next);
-                            saveRoster(next);
-                          }}
-                          className="text-on-surface-variant hover:text-error disabled:opacity-30"
-                          aria-label="Remove role"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">close</span>
-                        </button>
-                      </div>
+                          <input
+                            value={row.role}
+                            disabled={!live}
+                            data-hold-ignore
+                            onChange={(event) => {
+                              const roles = rosterDraft.roles.map((item, i) =>
+                                i === roleIndex ? { ...item, role: event.target.value } : item,
+                              );
+                              const next = { ...rosterDraft, roles };
+                              setRosterDraft(next);
+                              saveRoster(next);
+                            }}
+                            className="ui-input !h-8 w-[46%] text-[12px]"
+                            placeholder="Role"
+                          />
+                          <input
+                            value={row.name}
+                            disabled={!live}
+                            data-hold-ignore
+                            onChange={(event) => {
+                              const roles = rosterDraft.roles.map((item, i) =>
+                                i === roleIndex ? { ...item, name: event.target.value } : item,
+                              );
+                              const next = { ...rosterDraft, roles };
+                              setRosterDraft(next);
+                              saveRoster(next);
+                            }}
+                            className="ui-input !h-8 flex-1 min-w-0 text-[12px]"
+                            placeholder="Name"
+                          />
+                          <button
+                            type="button"
+                            disabled={!live || rosterDraft.roles.length <= 1}
+                            onClick={() => {
+                              const next = {
+                                ...rosterDraft,
+                                roles: rosterDraft.roles.filter((_, i) => i !== roleIndex),
+                              };
+                              setRosterDraft(next);
+                              saveRoster(next);
+                            }}
+                            className="ui-icon-btn ui-icon-btn-danger shrink-0"
+                            aria-label="Remove role"
+                          >
+                            <Icon name="close" className="text-[14px]" />
+                          </button>
+                        </div>
                       );
                     })}
-                    <button
-                      type="button"
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon="add"
                       disabled={!live}
                       onClick={() => {
                         const next = {
@@ -1326,235 +1262,203 @@ export default function Live() {
                         setRosterDraft(next);
                         saveRoster(next);
                       }}
-                      className="text-xs font-semibold text-primary hover:underline disabled:opacity-40"
                     >
                       Add role
-                    </button>
+                    </Button>
                   </div>
-                </>
-              )}
-            </div>
-          ) : null}
+                </ConsoleSection>
+              ) : null}
 
-          {active?.kind === "lyric" || presentation?.verse_overlay_ref ? (
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => toggleSection("lyrics")}
-              className="w-full flex items-center justify-between group"
-            >
-              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
-                {presentation?.verse_overlay_ref ? "Verse display" : "Lyrics text"}
-              </h4>
-              <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["lyrics"] ? "-rotate-90" : ""}`}>
-                expand_more
-              </span>
-            </button>
-            {!collapsedSections["lyrics"] && (
-              <>
-                {presentation?.verse_overlay_ref ? (
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {FREE_BIBLE_TRANSLATIONS.map((item) => {
-                      const activeLang =
-                        (displayPresentation?.verse_overlay_translation || "ceb") === item.value;
-                      return (
-                        <button
-                          key={item.value}
-                          type="button"
-                          disabled={!live}
-                          onClick={() => setVerseTranslation(item.value)}
-                          className={`rounded-lg px-2 py-2 text-[11px] font-semibold leading-tight transition-colors disabled:opacity-40 ${
-                            activeLang
-                              ? "bg-primary text-on-primary"
-                              : "bg-surface-container-low border border-white/10 text-on-surface-variant hover:bg-white/5"
-                          }`}
-                        >
-                          {item.label}
-                        </button>
-                      );
-                    })}
+              {active?.kind === "lyric" || verseOpen ? (
+                <ConsoleSection
+                  id="lyrics"
+                  title={verseOpen ? "Verse display" : "Lyrics text"}
+                  icon={verseOpen ? "auto_stories" : "format_bold"}
+                  summary={textSummary}
+                  open={openSection === "lyrics"}
+                  onToggle={toggleSection}
+                >
+                  {verseOpen ? (
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {FREE_BIBLE_TRANSLATIONS.map((item) => {
+                        const activeLang =
+                          (displayPresentation?.verse_overlay_translation || "ceb") === item.value;
+                        return (
+                          <button
+                            key={item.value}
+                            type="button"
+                            disabled={!live}
+                            aria-pressed={activeLang}
+                            onClick={() => setVerseTranslation(item.value)}
+                            className={`rounded-lg px-2 py-2 text-[11px] font-medium leading-tight transition-colors disabled:opacity-40 ${
+                              activeLang
+                                ? "bg-primary text-on-primary"
+                                : "bg-surface-container border border-white/10 text-on-surface-variant hover:bg-surface-container-high"
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <div className="grid grid-cols-[1fr_96px] gap-2">
+                    <select
+                      value={
+                        verseOpen
+                          ? displayPresentation?.verse_overlay_font || font || DEFAULT_STAGE_FONT
+                          : font
+                      }
+                      disabled={!live}
+                      onChange={(event) => {
+                        if (!live) return;
+                        const next = asStageFont(event.target.value);
+                        if (verseOpen) {
+                          patchPresentation({ verse_overlay_font: next });
+                          return;
+                        }
+                        setFont(next);
+                        patchSettings({ default_font: next });
+                      }}
+                      className="ui-input disabled:opacity-40"
+                      aria-label="Font family"
+                    >
+                      {STAGE_FONTS.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                          {option.id === DEFAULT_STAGE_FONT ? " (Default)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={
+                        verseOpen
+                          ? parseLyricTextStyle(displayPresentation?.verse_overlay_text_style || "bold")
+                              .bold
+                            ? "700"
+                            : "400"
+                          : lyricStyle.bold
+                            ? "700"
+                            : "400"
+                      }
+                      disabled={!live}
+                      onChange={(event) => {
+                        if (!live) return;
+                        const bold = event.target.value === "700";
+                        if (verseOpen) {
+                          const current = parseLyricTextStyle(
+                            displayPresentation?.verse_overlay_text_style || "bold",
+                          );
+                          patchPresentation({
+                            verse_overlay_text_style: serializeLyricTextStyle({ ...current, bold }),
+                          });
+                          return;
+                        }
+                        const next = { ...lyricStyle, bold };
+                        setLyricStyle(next);
+                        patchSettings({ lyrics_text_style: serializeLyricTextStyle(next) });
+                      }}
+                      className="ui-input disabled:opacity-40"
+                      aria-label="Font weight"
+                    >
+                      <option value="400">Regular</option>
+                      <option value="700">Bold</option>
+                    </select>
                   </div>
-                ) : null}
-                <select
-                  value={
-                    presentation?.verse_overlay_ref
-                      ? displayPresentation?.verse_overlay_font ||
-                        font ||
-                        DEFAULT_STAGE_FONT
-                      : font
-                  }
-                  disabled={!live}
-                  onChange={(event) => {
-                    if (!live) return;
-                    const next = asStageFont(event.target.value);
-                    if (presentation?.verse_overlay_ref) {
-                      patchPresentation({ verse_overlay_font: next });
-                      return;
+                  <TextSizePicker
+                    disabled={!live}
+                    value={
+                      verseOpen
+                        ? displayPresentation?.verse_overlay_text_size ||
+                          lyricSize ||
+                          DEFAULT_STAGE_TEXT_SIZE
+                        : lyricSize
                     }
-                    setFont(next);
-                    patchSettings({ default_font: next });
-                  }}
-                  className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-40"
-                  aria-label="Font family"
+                    onChange={(size) => {
+                      if (!live) return;
+                      if (verseOpen) {
+                        patchPresentation({ verse_overlay_text_size: size });
+                        return;
+                      }
+                      setLyricSize(size);
+                      patchSettings({ lyrics_text_size: size });
+                    }}
+                  />
+                  <TextStylePicker
+                    disabled={!live}
+                    value={
+                      verseOpen
+                        ? parseLyricTextStyle(displayPresentation?.verse_overlay_text_style || "bold")
+                        : lyricStyle
+                    }
+                    onChange={(next) => {
+                      if (!live) return;
+                      if (verseOpen) {
+                        patchPresentation({
+                          verse_overlay_text_style: serializeLyricTextStyle(next),
+                        });
+                        return;
+                      }
+                      setLyricStyle(next);
+                      patchSettings({ lyrics_text_style: serializeLyricTextStyle(next) });
+                    }}
+                  />
+                  <p className="text-[11px] text-on-surface-variant">
+                    {verseOpen
+                      ? "Font, weight, size, and style update on the projector for this verse overlay."
+                      : "Title and section stay in Arial. Only the lyrics use this font and size."}
+                  </p>
+                </ConsoleSection>
+              ) : null}
+
+              {active?.kind === "lyric" && !verseOpen ? (
+                <ConsoleSection
+                  id="chords"
+                  title="Chords"
+                  icon="music_note"
+                  summary={chords.show ? "Shown" : "Hidden"}
+                  open={openSection === "chords"}
+                  onToggle={toggleSection}
                 >
-                  {STAGE_FONTS.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                      {option.id === DEFAULT_STAGE_FONT ? " (Default)" : ""}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={
-                    presentation?.verse_overlay_ref
-                      ? parseLyricTextStyle(
-                          displayPresentation?.verse_overlay_text_style ||
-                            "bold",
-                        ).bold
-                        ? "700"
-                        : "400"
-                      : lyricStyle.bold
-                        ? "700"
-                        : "400"
-                  }
-                  disabled={!live}
-                  onChange={(event) => {
-                    if (!live) return;
-                    const bold = event.target.value === "700";
-                    if (presentation?.verse_overlay_ref) {
-                      const current = parseLyricTextStyle(
-                        displayPresentation?.verse_overlay_text_style ||
-                          "bold",
-                      );
-                      patchPresentation({
-                        verse_overlay_text_style: serializeLyricTextStyle({
-                          ...current,
-                          bold,
-                        }),
-                      });
-                      return;
-                    }
-                    const next = { ...lyricStyle, bold };
-                    setLyricStyle(next);
-                    patchSettings({
-                      lyrics_text_style: serializeLyricTextStyle(next),
-                    });
-                  }}
-                  className="w-full bg-surface-container-low border border-white/10 rounded-lg px-3 py-2 text-sm disabled:opacity-40"
-                  aria-label="Font weight"
+                  <ChordControls
+                    chords={chords}
+                    onChange={updateChords}
+                    itemId={active.itemId}
+                    songKey={active.musicalKey}
+                    hasChords={activeHasChords}
+                  />
+                </ConsoleSection>
+              ) : null}
+
+              {active?.kind === "scripture" && currentPassage && !verseOpen ? (
+                <ConsoleSection
+                  id="scripture"
+                  title="Scripture text"
+                  icon="menu_book"
+                  open={openSection === "scripture"}
+                  onToggle={toggleSection}
                 >
-                  <option value="400">Regular</option>
-                  <option value="700">Bold</option>
-                </select>
-                <TextSizePicker
-                  disabled={!live}
-                  value={
-                    presentation?.verse_overlay_ref
-                      ? displayPresentation?.verse_overlay_text_size ||
-                        lyricSize ||
-                        DEFAULT_STAGE_TEXT_SIZE
-                      : lyricSize
-                  }
-                  onChange={(size) => {
-                    if (!live) return;
-                    if (presentation?.verse_overlay_ref) {
-                      patchPresentation({ verse_overlay_text_size: size });
-                      return;
-                    }
-                    setLyricSize(size);
-                    patchSettings({ lyrics_text_size: size });
-                  }}
-                />
-                <TextStylePicker
-                  disabled={!live}
-                  value={
-                    presentation?.verse_overlay_ref
-                      ? parseLyricTextStyle(
-                          displayPresentation?.verse_overlay_text_style ||
-                            "bold",
-                        )
-                      : lyricStyle
-                  }
-                  onChange={(next) => {
-                    if (!live) return;
-                    if (presentation?.verse_overlay_ref) {
-                      patchPresentation({
-                        verse_overlay_text_style:
-                          serializeLyricTextStyle(next),
-                      });
-                      return;
-                    }
-                    setLyricStyle(next);
-                    patchSettings({
-                      lyrics_text_style: serializeLyricTextStyle(next),
-                    });
-                  }}
-                />
-                <p className="text-[10px] text-on-surface-variant">
-                  {presentation?.verse_overlay_ref
-                    ? "Font, weight, size, and style update on the projector for this verse overlay."
-                    : "Title and section stay in Arial. Only the lyrics use this font and size."}
-                </p>
-              </>
-            )}
-          </div>
-          ) : null}
+                  <ScriptureStyleControls passage={currentPassage} onChange={patchScriptureStyle} />
+                </ConsoleSection>
+              ) : null}
 
-          {active?.kind === "lyric" && !presentation?.verse_overlay_ref ? (
-            <ChordControls
-              chords={chords}
-              onChange={updateChords}
-              itemId={active.itemId}
-              songKey={active.musicalKey}
-              hasChords={activeHasChords}
-            />
-          ) : null}
-
-          {active?.kind === "scripture" && currentPassage && !presentation?.verse_overlay_ref ? (
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => toggleSection("scripture")}
-                className="w-full flex items-center justify-between group"
-              >
-                <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
-                  Scripture text
-                </h4>
-                <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["scripture"] ? "-rotate-90" : ""}`}>
-                  expand_more
-                </span>
-              </button>
-              {!collapsedSections["scripture"] && (
-                <ScriptureStyleControls passage={currentPassage} onChange={patchScriptureStyle} />
-              )}
-            </div>
-          ) : null}
-
-          {sermonActive ? (
-            <div className="space-y-3">
-              <button
-                type="button"
-                onClick={() => toggleSection("sermon")}
-                className="w-full flex items-center justify-between group"
-              >
-                <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
-                  Sermon Control
-                </h4>
-                <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["sermon"] ? "-rotate-90" : ""}`}>
-                  expand_more
-                </span>
-              </button>
-              {!collapsedSections["sermon"] && (
-                <>
+              {sermonActive ? (
+                <ConsoleSection
+                  id="sermon"
+                  title="Sermon"
+                  icon="record_voice_over"
+                  open={openSection === "sermon"}
+                  onToggle={toggleSection}
+                >
                   <div className="rounded-lg border border-white/10 bg-surface-container-low p-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant mb-1">
+                    <p className="text-[11px] text-on-surface-variant mb-1">
                       {titleSlide
                         ? "Title slide"
                         : currentSlide && isSermonSpace(currentSlide.content)
                           ? "Space"
                           : "Current point"}
                     </p>
-                    <p className="text-sm text-on-surface line-clamp-4 whitespace-pre-line">
+                    <p className="text-[13px] text-on-surface line-clamp-4 whitespace-pre-line">
                       {titleSlide
                         ? currentItem?.sermon?.title || currentItem?.title
                         : currentSlide && isSermonSpace(currentSlide.content)
@@ -1562,45 +1466,39 @@ export default function Live() {
                           : sermonPlainText(currentSlide?.content ?? "").trim() || "Empty point"}
                     </p>
                   </div>
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon="edit_note"
+                    className="w-full"
                     disabled={!live}
                     onClick={() => setEditMode(true)}
-                    className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-primary/30 text-primary hover:bg-primary/10 text-xs font-semibold disabled:opacity-40"
                   >
-                    <span className="material-symbols-outlined text-[16px]">edit_note</span>
                     Edit sermon slides
-                  </button>
-                </>
-              )}
-            </div>
-          ) : null}
+                  </Button>
+                </ConsoleSection>
+              ) : null}
 
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={() => toggleSection("transition")}
-              className="w-full flex items-center justify-between group"
-            >
-              <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant group-hover:text-primary transition-colors">
-                Transition Speed
-              </h4>
-              <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/50 transition-transform ${collapsedSections["transition"] ? "-rotate-90" : ""}`}>
-                expand_more
-              </span>
-            </button>
-            {!collapsedSections["transition"] && (
-              <>
-                <div className="flex justify-between items-center">
-                  <span className="font-mono text-xs text-primary">{transitionSec}s</span>
+              <ConsoleSection
+                id="transition"
+                title="Transition"
+                icon="timer"
+                summary={`${transitionSec}s`}
+                open={openSection === "transition"}
+                onToggle={toggleSection}
+              >
+                <div className="flex justify-between items-center text-[12px]">
+                  <span className="text-on-surface-variant">Speed</span>
+                  <span className="font-mono text-on-surface tabular-nums">{transitionSec}s</span>
                 </div>
                 <input
-                  className="w-full h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary"
+                  className="w-full h-1 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-40"
                   max={2}
                   min={0}
                   step={0.1}
                   type="range"
                   disabled={!live}
+                  aria-label="Transition speed"
                   value={(displayPresentation?.transition_ms ?? 400) / 1000}
                   onChange={(event) => {
                     if (!displayPresentation) return;
@@ -1608,63 +1506,22 @@ export default function Live() {
                     patchPresentation({ transition_ms: ms });
                   }}
                 />
-                <div className="flex justify-between text-[10px] text-on-surface-variant font-medium">
-                  <span>CUT</span>
-                  <span>SMOOTH</span>
+                <div className="flex justify-between text-[11px] text-on-surface-variant">
+                  <span>Cut</span>
+                  <span>Smooth</span>
                 </div>
-              </>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <h4 className="text-[12px] font-semibold tracking-[0.05em] uppercase text-on-surface-variant">
-              Service items
-            </h4>
-            <div className="space-y-2">
-              {(displaySetlist?.items ?? []).map((item) => {
-                const hold = bindItem(item.id);
-                return (
-                <div
-                  key={item.id}
-                  {...hold}
-                  className="w-full p-3 rounded-lg bg-surface-container-high border border-white/5 flex items-center gap-3 text-left select-none touch-none cursor-grab active:cursor-grabbing"
-                >
-                  <span className="material-symbols-outlined text-on-surface-variant text-[18px] shrink-0">
-                    drag_indicator
-                  </span>
-                  <div className="w-8 h-8 rounded flex items-center justify-center bg-primary/20 text-primary shrink-0">
-                    <span className="material-symbols-outlined text-[20px]">
-                      {item.item_type === "song"
-                        ? "music_note"
-                        : item.item_type === "sermon"
-                          ? "record_voice_over"
-                          : item.item_type === "scripture"
-                            ? "menu_book"
-                            : item.item_type === "roster"
-                              ? "assignment_ind"
-                              : "movie"}
-                    </span>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-medium truncate">{item.title}</div>
-                    <div className="text-[10px] text-on-surface-variant truncate">
-                      {item.subtitle || item.item_type}
-                    </div>
-                  </div>
-                </div>
-                );
-              })}
+              </ConsoleSection>
             </div>
           </div>
         </aside>
       </main>
 
       <div
-        className={`fixed bottom-6 left-1/2 -translate-x-1/2 glass-panel px-4 py-2 rounded-full transition-opacity duration-300 pointer-events-none z-50 ${
+        className={`fixed bottom-6 left-1/2 -translate-x-1/2 panel px-4 py-2 rounded-full transition-opacity duration-300 pointer-events-none z-50 ${
           hint ? "opacity-100" : "opacity-0"
         }`}
       >
-        <span className="text-[10px] font-bold text-primary tracking-widest uppercase">
+        <span className="text-[11px] font-medium text-on-surface-variant">
           {`Space / arrows: next · ${live ? "hold and drag to reorder" : "go live to edit"}`}
         </span>
       </div>
@@ -1692,6 +1549,17 @@ export default function Live() {
         onShowCue={(next) => void goToCue(next)}
         onRefresh={refreshSetlist}
         onClose={() => setEditMode(false)}
+      />
+      <ConfirmDialog
+        open={confirmEnd}
+        title="End the presentation?"
+        description="The projector goes back to standby for everyone. You can go live again at any time."
+        confirmLabel="End Presentation"
+        onClose={() => setConfirmEnd(false)}
+        onConfirm={async () => {
+          setConfirmEnd(false);
+          await stopLive();
+        }}
       />
     </div>
   );

@@ -4,6 +4,7 @@ import { formatDuration } from "../../lib/helpers";
 import type { MediaAsset } from "../../lib/types";
 import { CardGridSkeleton } from "../Skeleton";
 import { newServiceItem, type ServiceItem } from "./serviceItem";
+import Icon from "../Icon";
 
 type MediaSelectPanelProps = {
   setlistName: string;
@@ -91,7 +92,7 @@ export default function MediaSelectPanel({
         className="absolute top-6 right-6 z-10"
         aria-label="Close"
       >
-        <span className="material-symbols-outlined">close</span>
+        <Icon name="close" />
       </button>
       <div className="p-6 md:p-8 flex-1 overflow-y-auto custom-scrollbar pb-28">
         <button

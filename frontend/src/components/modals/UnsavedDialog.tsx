@@ -1,4 +1,5 @@
 import Modal from "./Modal";
+import Icon from "../Icon";
 
 type UnsavedDialogProps = {
   open: boolean;
@@ -36,7 +37,7 @@ export default function UnsavedDialog({
         <div className="relative mb-6">
           <div className="absolute inset-0 bg-amber-400/20 rounded-full blur-xl" />
           <div className="relative w-16 h-16 rounded-full bg-amber-400/15 flex items-center justify-center text-amber-300 border border-amber-400/30">
-            <span className="material-symbols-outlined text-4xl">edit_note</span>
+            <Icon name="edit_note" className="text-4xl" />
           </div>
         </div>
 
@@ -59,7 +60,7 @@ export default function UnsavedDialog({
               type="button"
               disabled={busy}
               onClick={onSave}
-              className="w-full px-6 py-3.5 rounded-xl text-xs font-bold bg-gradient-to-r from-primary-container to-secondary-container text-white shadow-lg hover:opacity-90 transition-all active:scale-[0.98] disabled:opacity-60"
+              className="w-full px-6 py-3.5 rounded-xl text-xs font-bold btn-primary transition-all active:scale-[0.98] disabled:opacity-60"
             >
               {busy ? "Saving…" : "Save draft"}
             </button>

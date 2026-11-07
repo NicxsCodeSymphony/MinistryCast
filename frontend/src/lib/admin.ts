@@ -18,6 +18,9 @@ export type AdminChurch = {
   name: string;
   email: string;
   status: string;
+  address: string | null;
+  phone: string | null;
+  photo_url: string | null;
   created_at: string;
   onboarded_at: string | null;
   approved_at: string | null;
@@ -156,13 +159,24 @@ export async function adminListEvents(input: {
 
 export async function adminUpdateChurch(
   churchId: string,
-  patch: { name?: string; email?: string; status?: string },
+  patch: {
+    name?: string;
+    email?: string;
+    status?: string;
+    /** Empty string clears; undefined leaves unchanged. */
+    address?: string;
+    phone?: string;
+    photo_url?: string;
+  },
 ) {
   const { error } = await supabase.rpc("admin_update_church", {
     p_church_id: churchId,
     p_name: patch.name ?? null,
     p_email: patch.email ?? null,
     p_status: patch.status ?? null,
+    p_address: patch.address ?? null,
+    p_phone: patch.phone ?? null,
+    p_photo_url: patch.photo_url ?? null,
   });
   if (error) throw asRpcError(error, "Could not update church.");
 }

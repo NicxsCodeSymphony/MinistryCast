@@ -15,6 +15,8 @@ export function useUnsavedDraft(
 ) {
   const enabled = options.enabled ?? true;
   const skipRef = useRef(false);
+  /** A save is in flight: the page may navigate to the result without asking. */
+  const submittingRef = useRef(false);
   const pendingRef = useRef<(() => void) | null>(null);
   const dirtyRef = useRef(dirty);
   const enabledRef = useRef(enabled);
@@ -34,7 +36,7 @@ export function useUnsavedDraft(
       currentLocation: { pathname: string; search: string };
       nextLocation: { pathname: string; search: string };
     }) => {
-      if (skipRef.current) return false;
+      if (skipRef.current || submittingRef.current) return false;
       if (!enabledRef.current || !dirtyRef.current) return false;
       return (
         currentLocation.pathname !== nextLocation.pathname ||
@@ -109,8 +111,23 @@ export function useUnsavedDraft(
     }
   }, [finishLeave]);
 
+  /**
+   * Wrap the form's own submit. While it runs, navigation (e.g. opening the
+   * item that was just created) is not treated as leaving unsaved work. Saves
+   * can now finish before React re-renders the closed form, so relying on the
+   * next render to clear `dirty` raced the navigation.
+   */
+  const submit = useCallback(async <T,>(run: () => Promise<T>): Promise<T> => {
+    submittingRef.current = true;
+    try {
+      return await run();
+    } finally {
+      submittingRef.current = false;
+    }
+  }, []);
+
   const guard = useCallback((next: () => void) => {
-    if (!enabledRef.current || !dirtyRef.current || skipRef.current) {
+    if (!enabledRef.current || !dirtyRef.current || skipRef.current || submittingRef.current) {
       next();
       return;
     }
@@ -131,5 +148,5 @@ export function useUnsavedDraft(
     />
   );
 
-  return { guard, bypass, dialog };
+  return { guard, bypass, submit, dialog };
 }

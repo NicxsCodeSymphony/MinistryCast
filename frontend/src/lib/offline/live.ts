@@ -64,7 +64,9 @@ export type StageSnapshot = {
 
 export function setlistFingerprint(setlist: Setlist | null) {
   if (!setlist) return "";
-  return JSON.stringify(
+  return JSON.stringify([
+    // Setlist-level presentation settings must also trigger a refresh.
+    setlist.stage_background ?? null,
     (setlist.items ?? []).map((item) => [
       item.id,
       item.sort_order,
@@ -93,7 +95,7 @@ export function setlistFingerprint(setlist: Setlist | null) {
       item.passage?.color,
       item.payload,
     ]),
-  );
+  ]);
 }
 
 export function publishPresentation(row: Presentation) {

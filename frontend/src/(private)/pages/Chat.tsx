@@ -32,12 +32,13 @@ import {
   isSuperadmin,
   type SessionProfile,
 } from "../../lib/auth";
-import { Skeleton } from "../../components/Skeleton";
+import { Skeleton, ChatSkeleton } from "../../components/Skeleton";
 import { usePrefs } from "../../lib/PrefsContext";
 import { usePageActive } from "../../lib/PageActiveContext";
 import { translate } from "../../lib/i18n";
-import { openExternalUrl, splitTextLinks } from "../../lib/helpers";
+import { formatRelative, openExternalUrl, splitTextLinks } from "../../lib/helpers";
 import { useToast } from "../../lib/ToastContext";
+import Icon from "../../components/Icon";
 
 const CHAT_READ_KEY = "mc.chatReadAt";
 
@@ -227,33 +228,30 @@ function Avatar({
   name,
   url,
   size = "md",
-  active = false,
 }: {
   name: string;
   url?: string | null;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
   active?: boolean;
 }) {
   const dim =
-    size === "lg" ? "w-14 h-14 text-sm" : size === "sm" ? "w-9 h-9 text-xs" : "w-11 h-11 text-sm";
+    size === "lg"
+      ? "w-14 h-14 text-[16px]"
+      : size === "md"
+        ? "w-9 h-9 text-[12px]"
+        : size === "sm"
+          ? "w-8 h-8 text-[11px]"
+          : "w-6 h-6 text-[10px]";
   return (
-    <div
-      className={`${dim} rounded-full overflow-hidden shrink-0 flex items-center justify-center font-semibold ${
-        active
-          ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-container-low"
-          : "bg-surface-container-highest"
-      } ${url ? "" : "bg-surface-container-highest text-on-surface"}`}
+    <span
+      className={`${dim} rounded-full overflow-hidden shrink-0 flex items-center justify-center font-semibold bg-surface-container-highest border border-white/10 text-on-surface-variant`}
     >
       {url ? (
         <img src={url} alt="" className="w-full h-full object-cover" />
       ) : (
-        initials(name) || (
-          <span className="material-symbols-outlined text-[18px] text-on-surface-variant">
-            person
-          </span>
-        )
+        initials(name) || <Icon name="person" className="text-[14px]" />
       )}
-    </div>
+    </span>
   );
 }
 
@@ -1260,8 +1258,8 @@ export default function Chat() {
 
   if (loading) {
     return (
-      <main className="h-full flex items-center justify-center">
-        <div className="w-10 h-10 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+      <main className="h-full">
+        <ChatSkeleton />
       </main>
     );
   }
@@ -1280,244 +1278,236 @@ export default function Chat() {
       (editingId && editExistingAttachment && !editClearedAttachment),
   );
 
-  return (
-    <main className="h-full overflow-hidden flex flex-col p-4 sm:p-6 gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-surface-container-high flex items-center justify-center text-primary">
-            <span className="material-symbols-outlined text-[22px]">forum</span>
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-[clamp(1.4rem,2.5vw,1.75rem)] font-semibold tracking-tight text-on-surface">
-              {t("chat.title")}
-            </h1>
-            <p className="text-sm text-on-surface-variant truncate mt-2">
-              {superadmin
-                ? t("chat.subtitle")
-                : t("chat.subtitleChurch", {
-                    church: profile?.church?.name ?? "Church",
-                  })}
-            </p>
-          </div>
-        </div>
-      </div>
+  const channelMembers =
+    active?.kind === "church"
+      ? contacts.filter(
+          (row) => row.id !== me && (row.church_name ?? "") === (active.name ?? ""),
+        )
+      : [];
+  const createdLabel = active?.created_at
+    ? new Date(active.created_at).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    : "—";
+  const lastActivity = active ? channelActivityAt(active) : "";
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0 flex-1">
-        <section className="lg:col-span-4 flex flex-col rounded-xl bg-surface-container-low overflow-hidden border border-white/5 min-h-[320px]">
+  const groupLabel = (
+    open: boolean,
+    toggle: () => void,
+    label: string,
+    count: number,
+  ) => (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-expanded={open}
+      className="sticky top-0 z-[1] w-full flex items-center gap-1.5 px-4 h-8 bg-surface-container-low border-b border-white/5 text-left text-[12px] font-medium text-on-surface-variant hover:text-on-surface"
+    >
+      <Icon
+        name="expand_more"
+        className={`text-[14px] transition-transform ${open ? "rotate-0" : "-rotate-90"}`}
+      />
+      {label}
+      <span className="ml-1 text-outline tabular-nums">{count}</span>
+    </button>
+  );
+
+  const rowClass = (selected: boolean) =>
+    `w-full text-left flex items-center gap-3 px-4 h-[52px] border-b border-white/5 transition-colors ${
+      selected
+        ? "bg-primary/10 shadow-[inset_2px_0_0_var(--mc-primary)]"
+        : "hover:bg-white/[0.03]"
+    }`;
+
+  return (
+    <main className="h-full overflow-hidden flex flex-col">
+      <header className="shrink-0 flex items-center gap-3 px-4 sm:px-6 h-14 border-b border-white/5">
+        <h1 className="text-[15px] font-semibold text-on-surface truncate">
+          {t("chat.title")}
+        </h1>
+        <span className="text-[13px] text-on-surface-variant truncate">
+          {superadmin
+            ? t("chat.subtitle")
+            : t("chat.subtitleChurch", {
+                church: profile?.church?.name ?? "Church",
+              })}
+        </span>
+      </header>
+
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_280px] gap-4 p-4 sm:p-6">
+        <section
+          aria-label={t("chat.channels")}
+          className="flex flex-col min-h-[320px] bg-surface-container rounded-xl border border-white/5 overflow-hidden"
+        >
           <div className="p-3 border-b border-white/5">
             <div className="relative">
-              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant">
-                search
-              </span>
+              <Icon
+                name="search"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[15px] text-outline"
+              />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-xl bg-surface-container-lowest border border-white/10 text-sm outline-none focus:border-primary/40"
+                className="ui-input !pl-8"
                 placeholder={t("chat.findPlaceholder")}
               />
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4 custom-scrollbar">
-            <div>
-              <button
-                type="button"
-                onClick={() => setChannelsOpen((v) => !v)}
-                className="w-full flex items-center gap-1 px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant hover:text-on-surface"
-              >
-                <span
-                  className={`material-symbols-outlined text-[16px] transition-transform ${
-                    channelsOpen ? "rotate-0" : "-rotate-90"
-                  }`}
-                >
-                  expand_more
-                </span>
-                {t("chat.channels")}
-              </button>
-              {channelsOpen ? (
-                <div className="mt-1 space-y-0.5">
-                  {groupChannels.map((channel) => {
-                    const selected = channel.id === activeId;
-                    return (
-                      <button
-                        key={channel.id}
-                        type="button"
-                        onClick={() => selectChannel(channel.id)}
-                        className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors ${
-                          selected
-                            ? "bg-surface-container-high text-on-surface"
-                            : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
-                        }`}
-                      >
-                        {channel.church_photo_url ? (
-                          <img
-                            src={channel.church_photo_url}
-                            alt=""
-                            className="w-8 h-8 rounded-lg object-cover shrink-0"
-                          />
-                        ) : (
-                          <span
-                            className={`material-symbols-outlined text-[18px] shrink-0 ${
-                              selected ? "text-primary" : ""
-                            }`}
-                          >
-                            tag
-                          </span>
-                        )}
-                        <span className="text-sm font-medium truncate">
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {groupLabel(channelsOpen, () => setChannelsOpen((v) => !v), t("chat.channels"), groupChannels.length)}
+            {channelsOpen ? (
+              <div>
+                {groupChannels.map((channel) => {
+                  const selected = channel.id === activeId;
+                  return (
+                    <button
+                      key={channel.id}
+                      type="button"
+                      onClick={() => selectChannel(channel.id)}
+                      aria-current={selected || undefined}
+                      className={rowClass(selected)}
+                    >
+                      {channel.church_photo_url ? (
+                        <img
+                          src={channel.church_photo_url}
+                          alt=""
+                          className="w-8 h-8 rounded-lg object-cover shrink-0 border border-white/10"
+                        />
+                      ) : (
+                        <span className="w-8 h-8 rounded-lg shrink-0 bg-surface-container-high border border-white/10 flex items-center justify-center text-on-surface-variant">
+                          <Icon name="tag" className="text-[15px]" />
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[14px] font-medium text-on-surface truncate">
                           {channel.name}
                         </span>
-                      </button>
-                    );
-                  })}
-                  {!groupChannels.length ? (
-                    <p className="px-2.5 py-2 text-xs text-on-surface-variant">
-                      {t("chat.noChannels")}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
+                        <span className="block text-[12px] text-on-surface-variant truncate">
+                          {t("chat.churchGroupLive")}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+                {!groupChannels.length ? (
+                  <p className="px-4 py-3 text-[12px] text-on-surface-variant">
+                    {t("chat.noChannels")}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
-            <div>
-              <button
-                type="button"
-                onClick={() => setDmsOpen((v) => !v)}
-                className="w-full flex items-center gap-1 px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant hover:text-on-surface"
-              >
-                <span
-                  className={`material-symbols-outlined text-[16px] transition-transform ${
-                    dmsOpen ? "rotate-0" : "-rotate-90"
-                  }`}
-                >
-                  expand_more
-                </span>
-                {t("chat.directMessages")}
-              </button>
-              {dmsOpen ? (
-                <div className="mt-1 space-y-0.5">
-                  {dmChannels.length ? (
-                    <p className="px-2.5 pt-1 pb-1 text-[10px] uppercase tracking-widest text-on-surface-variant/70">
-                      Recent
-                    </p>
-                  ) : null}
-                  {dmChannels.map((channel) => {
-                    const label = channel.peer_name || channel.name;
-                    const selected = channel.id === activeId;
-                    const unread = isChannelUnread(
-                      channel,
-                      me,
-                      readMap,
-                      activeId,
-                    );
-                    return (
-                      <button
-                        key={channel.id}
-                        type="button"
-                        onClick={() => selectChannel(channel.id)}
-                        className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors ${
-                          selected
-                            ? "bg-surface-container-high text-on-surface"
-                            : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
-                        }`}
-                      >
-                        <Avatar
-                          name={label}
-                          url={channel.peer_avatar_url}
-                          size="sm"
-                          active={selected}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p
-                            className={`text-sm truncate ${
-                              unread
-                                ? "font-bold text-on-surface"
-                                : "font-medium"
+            {groupLabel(dmsOpen, () => setDmsOpen((v) => !v), t("chat.directMessages"), dmChannels.length)}
+            {dmsOpen ? (
+              <div>
+                {dmChannels.map((channel) => {
+                  const label = channel.peer_name || channel.name;
+                  const selected = channel.id === activeId;
+                  const unread = isChannelUnread(channel, me, readMap, activeId);
+                  return (
+                    <button
+                      key={channel.id}
+                      type="button"
+                      onClick={() => selectChannel(channel.id)}
+                      aria-current={selected || undefined}
+                      className={rowClass(selected)}
+                    >
+                      <Avatar name={label} url={channel.peer_avatar_url} size="sm" />
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={`block text-[14px] truncate text-on-surface ${
+                            unread ? "font-semibold" : "font-medium"
+                          }`}
+                        >
+                          {label}
+                        </span>
+                        {channel.peer_church_name ? (
+                          <span
+                            className={`block text-[12px] truncate ${
+                              unread ? "text-on-surface" : "text-on-surface-variant"
                             }`}
                           >
-                            {label}
-                          </p>
-                          {channel.peer_church_name ? (
-                            <p
-                              className={`text-[11px] truncate ${
-                                unread
-                                  ? "text-on-surface/70 font-semibold"
-                                  : "text-on-surface-variant/80"
-                              }`}
-                            >
-                              {channel.peer_church_name}
-                            </p>
-                          ) : null}
-                        </div>
-                      </button>
-                    );
-                  })}
+                            {channel.peer_church_name}
+                          </span>
+                        ) : null}
+                      </span>
+                      {unread ? (
+                        <span className="w-2 h-2 rounded-full bg-primary shrink-0" aria-label="Unread" />
+                      ) : null}
+                    </button>
+                  );
+                })}
 
-                  {startableContacts.length ? (
-                    <>
-                      <p className="px-2.5 pt-3 pb-1 text-[10px] uppercase tracking-widest text-on-surface-variant/70">
-                        {superadmin ? "People" : "Church members"}
-                      </p>
-                      {startableContacts.map((contact) => (
-                        <button
-                          key={contact.id}
-                          type="button"
-                          disabled={openingDm}
-                          onClick={() => void startDm(contact)}
-                          className="w-full text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-on-surface-variant hover:bg-white/5 hover:text-on-surface disabled:opacity-60"
-                          title={`Message ${contact.name}`}
-                        >
-                          <Avatar
-                            name={contact.name}
-                            url={contact.avatar_url}
-                            size="sm"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium truncate">
-                              {contact.name}
-                            </p>
-                            <p className="text-[11px] text-on-surface-variant/80 truncate">
-                              {contact.church_name || "Start conversation"}
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                    </>
-                  ) : null}
-
-                  {!dmChannels.length && !startableContacts.length ? (
-                    <p className="px-2.5 py-2 text-xs text-on-surface-variant">
-                      No direct messages yet.
+                {startableContacts.length ? (
+                  <>
+                    <p className="px-4 pt-3 pb-1.5 text-[11px] font-medium text-outline">
+                      {superadmin ? "People" : "Church members"}
                     </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
+                    {startableContacts.map((contact) => (
+                      <button
+                        key={contact.id}
+                        type="button"
+                        disabled={openingDm}
+                        onClick={() => void startDm(contact)}
+                        className={`${rowClass(false)} disabled:opacity-60 group`}
+                        title={`Message ${contact.name}`}
+                      >
+                        <Avatar name={contact.name} url={contact.avatar_url} size="sm" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[14px] font-medium text-on-surface truncate">
+                            {contact.name}
+                          </span>
+                          <span className="block text-[12px] text-on-surface-variant truncate">
+                            {contact.church_name || "Start conversation"}
+                          </span>
+                        </span>
+                        <Icon
+                          name="send"
+                          className="text-[14px] text-outline opacity-0 group-hover:opacity-100 transition-opacity"
+                        />
+                      </button>
+                    ))}
+                  </>
+                ) : null}
+
+                {!dmChannels.length && !startableContacts.length ? (
+                  <p className="px-4 py-3 text-[12px] text-on-surface-variant">
+                    No direct messages yet.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </section>
 
-        <section className="lg:col-span-8 flex flex-col rounded-xl bg-surface-container-low overflow-hidden border border-white/5 min-h-[420px]">
+        <section
+          aria-label={headerName}
+          className="flex flex-col min-h-[420px] min-w-0 bg-surface-container rounded-xl border border-white/5 overflow-hidden"
+        >
           {active ? (
             <>
-              <div className="p-4 border-b border-white/5 flex items-center gap-3">
+              <div className="px-4 h-14 shrink-0 border-b border-white/5 flex items-center gap-3">
                 {active.kind === "dm" ? (
-                  <Avatar name={headerName} url={headerAvatar} />
+                  <Avatar name={headerName} url={headerAvatar} size="sm" />
                 ) : headerAvatar ? (
                   <img
                     src={headerAvatar}
                     alt=""
-                    className="w-11 h-11 rounded-xl object-cover shrink-0"
+                    className="w-8 h-8 rounded-lg object-cover shrink-0 border border-white/10"
                   />
                 ) : (
-                  <div className="w-11 h-11 rounded-full bg-surface-container-highest flex items-center justify-center text-primary shrink-0">
-                    <span className="material-symbols-outlined">tag</span>
-                  </div>
+                  <span className="w-8 h-8 rounded-lg bg-surface-container-high border border-white/10 flex items-center justify-center text-on-surface-variant shrink-0">
+                    <Icon name="tag" className="text-[15px]" />
+                  </span>
                 )}
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-semibold text-on-surface truncate">
+                  <h2 className="text-[14px] font-semibold text-on-surface truncate">
                     {headerName}
                   </h2>
-                  <p className="text-xs text-on-surface-variant mt-1">
+                  <p className="text-[12px] text-on-surface-variant truncate">
                     {active.kind === "church"
                       ? t("chat.churchGroupLive")
                       : active.peer_church_name
@@ -1531,38 +1521,35 @@ export default function Chat() {
                   <button
                     type="button"
                     onClick={() => setMenuOpen((v) => !v)}
-                    className="w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5"
+                    className="ui-icon-btn"
                     aria-label={t("chat.options")}
+                    aria-expanded={menuOpen}
                   >
-                    <span className="material-symbols-outlined">more_vert</span>
+                    <Icon name="more_horiz" className="text-[16px]" />
                   </button>
                   {menuOpen ? (
-                    <div className="absolute right-0 top-10 z-20 w-52 rounded-xl border border-white/10 bg-surface-container-high shadow-xl py-1">
+                    <div className="ui-menu absolute right-0 top-10 z-20 w-52 py-1">
                       <button
                         type="button"
-                        className="w-full text-left px-3 py-2.5 text-sm hover:bg-white/5 flex items-center gap-2"
+                        className="w-full text-left px-3 h-8 text-[13px] text-on-surface hover:bg-white/5 flex items-center gap-2"
                         onClick={() => {
                           setMenuOpen(false);
                           setConfirmDeleteChat(true);
                         }}
                       >
-                        <span className="material-symbols-outlined text-[18px]">
-                          delete
-                        </span>
+                        <Icon name="delete" className="text-[15px] text-on-surface-variant" />
                         Delete messages
                       </button>
                       {active.kind === "dm" && activePeerId ? (
                         <button
                           type="button"
-                          className="w-full text-left px-3 py-2.5 text-sm text-[#ffb4ab] hover:bg-white/5 flex items-center gap-2"
+                          className="w-full text-left px-3 h-8 text-[13px] text-error hover:bg-white/5 flex items-center gap-2"
                           onClick={() => {
                             setMenuOpen(false);
                             setConfirmBlock(true);
                           }}
                         >
-                          <span className="material-symbols-outlined text-[18px]">
-                            block
-                          </span>
+                          <Icon name="block" className="text-[15px]" />
                           Block user
                         </button>
                       ) : null}
@@ -1570,18 +1557,18 @@ export default function Chat() {
                   ) : null}
                 </div>
               </div>
-
               <div
                 ref={listRef}
                 onScroll={onMessagesScroll}
-                className={`flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar transition-opacity duration-150 ${
+                className={`flex-1 overflow-y-auto px-4 sm:px-6 py-5 custom-scrollbar transition-opacity duration-150 ${
                   threadReady || loadingMessages ? "opacity-100" : "opacity-0"
                 }`}
               >
                 {loadingOlder ? (
-                  <p className="text-center text-xs text-on-surface-variant py-1">
-                    Loading older messages…
-                  </p>
+                  <div className="py-1 space-y-3" aria-busy="true" aria-label="Loading older messages">
+                    <Skeleton className="h-10 w-1/2 rounded-2xl" />
+                    <Skeleton className="h-10 w-1/3 rounded-2xl ml-auto" />
+                  </div>
                 ) : hasMoreOlder ? (
                   <p className="text-center text-[11px] text-on-surface-variant/70 py-1">
                     Scroll up for older messages
@@ -1643,38 +1630,52 @@ export default function Chat() {
                   </div>
                 ) : null}
 
-                {messages.map((message) => {
+                {messages.map((message, index) => {
                   const mine = message.sender_id === me;
                   const label = message.sender?.name ?? "Member";
                   const deleted = Boolean(message.deleted_at);
+                  const prev = index > 0 ? messages[index - 1] : null;
+                  const grouped = Boolean(
+                    prev &&
+                      prev.sender_id === message.sender_id &&
+                      !prev.deleted_at &&
+                      !message.reply_to &&
+                      Date.parse(message.created_at) - Date.parse(prev.created_at) < 5 * 60_000,
+                  );
                   return (
                     <div
                       key={message.id}
                       id={`chat-msg-${message.id}`}
-                      className={`flex items-start gap-3 group scroll-mt-8 rounded-2xl transition-colors duration-500 ${
-                        mine ? "justify-end" : ""
-                      } ${
+                      className={`flex items-end gap-2.5 group scroll-mt-8 rounded-xl px-1 py-0.5 transition-colors duration-500 ${
+                        grouped ? "mt-0.5" : "mt-4 first:mt-0"
+                      } ${mine ? "justify-end" : ""} ${
                         highlightId === message.id
                           ? "bg-primary/10 ring-1 ring-primary/25"
                           : ""
                       }`}
                     >
                       {!mine ? (
-                        <Avatar
-                          name={label}
-                          url={message.sender?.avatar_url}
-                          size="sm"
-                        />
+                        grouped ? (
+                          <span className="w-8 shrink-0" aria-hidden />
+                        ) : (
+                          <Avatar
+                            name={label}
+                            url={message.sender?.avatar_url}
+                            size="sm"
+                          />
+                        )
                       ) : null}
-                      <div className={`max-w-[75%] ${mine ? "items-end" : ""}`}>
-                          <div className="flex items-baseline gap-2 mb-1 flex-wrap">
-                          <span className="text-sm font-semibold text-on-surface">
-                            {mine ? t("chat.you") : label}
-                          </span>
-                          <span className="text-[11px] text-on-surface-variant">
-                            {formatTime(message.created_at)}
-                          </span>
-                        </div>
+                      <div className={`max-w-[min(75%,560px)] flex flex-col ${mine ? "items-end" : "items-start"}`}>
+                        {!grouped ? (
+                          <div className={`flex items-baseline gap-2 mb-1 px-1 ${mine ? "flex-row-reverse" : ""}`}>
+                            <span className="text-[12px] font-medium text-on-surface">
+                              {mine ? t("chat.you") : label}
+                            </span>
+                            <span className="text-[11px] text-outline tabular-nums">
+                              {formatTime(message.created_at)}
+                            </span>
+                          </div>
+                        ) : null}
                         <div className="relative w-fit max-w-full">
                           {!deleted && message.reply_to ? (
                             <button
@@ -1682,11 +1683,7 @@ export default function Chat() {
                               onClick={() =>
                                 scrollToMessage(message.reply_to!.id)
                               }
-                              className={`mb-1 w-full text-left rounded-xl px-2.5 py-1.5 border-l-[3px] border-primary transition-colors duration-200 ${
-                                mine
-                                  ? "bg-primary/15 hover:bg-primary/25"
-                                  : "bg-white/5 hover:bg-white/10"
-                              }`}
+                              className="mb-1 w-full text-left rounded-lg px-2.5 py-1.5 border-l-2 border-primary bg-surface-container-high hover:bg-surface-container-highest transition-colors duration-200"
                             >
                               <p className="text-[11px] font-semibold text-primary truncate">
                                 {message.reply_to.sender_id === me
@@ -1702,14 +1699,14 @@ export default function Chat() {
                             </button>
                           ) : null}
                           <div
-                            className={`p-3 rounded-2xl text-sm leading-relaxed ${
+                            className={`px-3.5 py-2 rounded-[14px] text-[14px] leading-[1.5] ${
                               deleted
-                                ? "italic opacity-60 bg-surface-container text-on-surface-variant"
+                                ? "italic text-on-surface-variant border border-dashed border-white/10"
                                 : mine
-                                  ? "rounded-tr-sm bg-primary text-on-primary"
-                                  : "rounded-tl-sm bg-surface-container text-on-surface"
+                                  ? `bg-primary text-on-primary ${grouped ? "" : "rounded-tr-[4px]"}`
+                                  : `bg-surface-container-high text-on-surface border border-white/5 ${grouped ? "" : "rounded-tl-[4px]"}`
                             } ${message.pending ? "opacity-70" : ""} ${
-                              message.failed ? "ring-1 ring-[#ffb4ab]" : ""
+                              message.failed ? "ring-1 ring-error" : ""
                             }`}
                           >
                             {deleted ? (
@@ -1749,9 +1746,7 @@ export default function Chat() {
                                       mine ? "text-on-primary" : "text-primary"
                                     }`}
                                   >
-                                    <span className="material-symbols-outlined text-[18px]">
-                                      attach_file
-                                    </span>
+                                    <Icon name="attach_file" className="text-[18px]" />
                                     {message.attachment_name || t("chat.downloadFile")}
                                   </button>
                                 ) : null}
@@ -1779,10 +1774,10 @@ export default function Chat() {
                                   : ""
                               }`}
                             >
-                              <div className="flex items-center gap-0.5 rounded-full bg-surface-container-high border border-white/10 px-1 py-1 shadow-lg">
+                              <div className="ui-menu flex items-center gap-0.5 !rounded-lg !p-0.5">
                                 <button
                                   type="button"
-                                  className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center text-on-surface-variant"
+                                  className="w-7 h-7 rounded-md hover:bg-white/10 flex items-center justify-center text-on-surface-variant hover:text-on-surface"
                                   title={t("chat.reply")}
                                   aria-label={t("chat.reply")}
                                   onClick={(event) => {
@@ -1790,13 +1785,11 @@ export default function Chat() {
                                     startReply(message);
                                   }}
                                 >
-                                  <span className="material-symbols-outlined text-[20px]">
-                                    reply
-                                  </span>
+                                  <Icon name="reply" className="text-[15px]" />
                                 </button>
                                 <button
                                   type="button"
-                                  className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center text-on-surface-variant"
+                                  className="w-7 h-7 rounded-md hover:bg-white/10 flex items-center justify-center text-on-surface-variant hover:text-on-surface"
                                   title="Add reaction"
                                   aria-label="Add reaction"
                                   onClick={(event) => {
@@ -1818,13 +1811,11 @@ export default function Chat() {
                                     });
                                   }}
                                 >
-                                  <span className="material-symbols-outlined text-[20px]">
-                                    add_reaction
-                                  </span>
+                                  <Icon name="add_reaction" className="text-[15px]" />
                                 </button>
                                 <button
                                   type="button"
-                                  className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center text-on-surface-variant"
+                                  className="w-7 h-7 rounded-md hover:bg-white/10 flex items-center justify-center text-on-surface-variant hover:text-on-surface"
                                   title={t("chat.more")}
                                   aria-label={t("chat.messageOptions")}
                                   onClick={(event) => {
@@ -1850,16 +1841,14 @@ export default function Chat() {
                                     });
                                   }}
                                 >
-                                  <span className="material-symbols-outlined text-[20px]">
-                                    more_horiz
-                                  </span>
+                                  <Icon name="more_horiz" className="text-[15px]" />
                                 </button>
                               </div>
                             </div>
                           ) : null}
 
                           {message.reactions?.length ? (
-                            <div className="relative z-10 -mt-2.5 flex flex-wrap gap-1 justify-start pl-1">
+                            <div className={`relative z-10 -mt-1.5 flex flex-wrap gap-1 ${mine ? "justify-end pr-1" : "justify-start pl-1"}`}>
                               {message.reactions.map((reaction) => (
                                 <button
                                   key={reaction.emoji}
@@ -1867,12 +1856,10 @@ export default function Chat() {
                                   onClick={() =>
                                     void onReact(message.id, reaction.emoji)
                                   }
-                                  className={`text-xs px-2 py-0.5 rounded-full border shadow-md ${
-                                    mine
-                                      ? "border-white/20 bg-background text-on-surface"
-                                      : reaction.mine
-                                        ? "border-primary/40 bg-surface-container-highest text-on-surface"
-                                        : "border-white/15 bg-surface-container-highest text-on-surface"
+                                  className={`text-[12px] h-6 px-2 rounded-full border tabular-nums transition-colors ${
+                                    reaction.mine
+                                      ? "border-primary/50 bg-primary/15 text-on-surface"
+                                      : "border-white/10 bg-surface-container-highest text-on-surface hover:border-white/20"
                                   }`}
                                 >
                                   {reaction.emoji} {reaction.count}
@@ -1884,7 +1871,7 @@ export default function Chat() {
 
                         {!deleted && message.edited_at ? (
                           <div
-                            className={`mt-1 text-[11px] text-on-surface-variant italic ${
+                            className={`mt-1 px-1 text-[11px] text-outline ${
                               mine ? "text-right" : "text-left"
                             }`}
                           >
@@ -1892,13 +1879,6 @@ export default function Chat() {
                           </div>
                         ) : null}
                       </div>
-                      {mine ? (
-                        <Avatar
-                          name={profile?.user?.name || "You"}
-                          url={myAvatar}
-                          size="sm"
-                        />
-                      ) : null}
                     </div>
                   );
                 })}
@@ -1907,14 +1887,12 @@ export default function Chat() {
 
               <form
                 onSubmit={(event) => void onSend(event)}
-                className="p-4 border-t border-white/5 space-y-2"
+                className="px-4 sm:px-6 pt-3 pb-4 border-t border-white/5 space-y-2"
               >
                 {editingId ? (
                   <div className="flex items-center justify-between gap-2 text-xs text-primary animate-[fadeSlideIn_180ms_ease-out]">
                     <span className="inline-flex items-center gap-1.5 font-medium">
-                      <span className="material-symbols-outlined text-[16px]">
-                        edit
-                      </span>
+                      <Icon name="edit" className="text-[16px]" />
                       {t("chat.editing")}
                     </span>
                     <button
@@ -1927,8 +1905,8 @@ export default function Chat() {
                   </div>
                 ) : null}
                 {replyTo && !editingId ? (
-                  <div className="flex items-stretch gap-2 rounded-xl border border-white/10 bg-surface-container overflow-hidden animate-[fadeSlideIn_180ms_ease-out]">
-                    <div className="w-1 shrink-0 bg-primary" />
+                  <div className="flex items-stretch gap-2 rounded-lg border border-white/10 bg-surface-container-high overflow-hidden animate-[fadeSlideIn_180ms_ease-out]">
+                    <div className="w-0.5 shrink-0 bg-primary" />
                     <div className="min-w-0 flex-1 py-2 pr-1">
                       <p className="text-xs font-semibold text-primary truncate">
                         {t("chat.replyingTo", {
@@ -1948,9 +1926,7 @@ export default function Chat() {
                       className="px-3 text-on-surface-variant hover:text-on-surface"
                       aria-label={t("chat.cancelReply")}
                     >
-                      <span className="material-symbols-outlined text-[18px]">
-                        close
-                      </span>
+                      <Icon name="close" className="text-[18px]" />
                     </button>
                   </div>
                 ) : null}
@@ -1986,9 +1962,7 @@ export default function Chat() {
                       />
                     ) : (
                       <div className="flex items-center gap-2 px-3 py-2 text-sm text-on-surface">
-                        <span className="material-symbols-outlined text-[18px]">
-                          attach_file
-                        </span>
+                        <Icon name="attach_file" className="text-[18px]" />
                         <span className="truncate max-w-[200px]">
                           {pendingFile.name}
                         </span>
@@ -2000,9 +1974,7 @@ export default function Chat() {
                       className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
                       title={t("chat.removeAttachment")}
                     >
-                      <span className="material-symbols-outlined text-[16px]">
-                        close
-                      </span>
+                      <Icon name="close" className="text-[16px]" />
                     </button>
                   </div>
                 ) : editingId &&
@@ -2017,9 +1989,7 @@ export default function Chat() {
                       />
                     ) : (
                       <div className="flex items-center gap-2 px-3 py-2 text-sm text-on-surface">
-                        <span className="material-symbols-outlined text-[18px]">
-                          attach_file
-                        </span>
+                        <Icon name="attach_file" className="text-[18px]" />
                         <span className="truncate max-w-[200px]">
                           {editExistingAttachment.name}
                         </span>
@@ -2031,34 +2001,28 @@ export default function Chat() {
                       className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
                       title={t("chat.removeAttachment")}
                     >
-                      <span className="material-symbols-outlined text-[16px]">
-                        close
-                      </span>
+                      <Icon name="close" className="text-[16px]" />
                     </button>
                   </div>
                 ) : null}
-                <div className="rounded-2xl bg-surface-container-lowest border border-white/10 px-2 py-1.5 flex items-center gap-1.5 min-h-[52px]">
+                <div className="rounded-[12px] bg-surface-container-low border border-white/10 focus-within:border-primary/50 transition-colors px-1.5 py-1.5 flex items-end gap-1 min-h-[48px]">
                   <button
                     type="button"
                     disabled={sending}
                     onClick={() => photoInputRef.current?.click()}
-                    className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5 disabled:opacity-50"
+                    className="ui-icon-btn shrink-0 !w-8 !h-8 disabled:opacity-50"
                     title={t("chat.addPhoto")}
                   >
-                    <span className="material-symbols-outlined text-[20px]">
-                      photo_camera
-                    </span>
+                    <Icon name="photo_camera" className="text-[16px]" />
                   </button>
                   <button
                     type="button"
                     disabled={sending}
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5 disabled:opacity-50"
+                    className="ui-icon-btn shrink-0 !w-8 !h-8 disabled:opacity-50"
                     title={t("chat.addFile")}
                   >
-                    <span className="material-symbols-outlined text-[20px]">
-                      attach_file
-                    </span>
+                    <Icon name="attach_file" className="text-[16px]" />
                   </button>
                   <textarea
                     ref={draftInputRef}
@@ -2081,34 +2045,135 @@ export default function Chat() {
                           ? t("chat.messageChannel", { name: active.name })
                           : t("chat.writeMessage")
                     }
-                    className="flex-1 min-w-0 bg-transparent resize-none outline-none px-2 py-2 text-sm leading-5 max-h-28 overflow-y-auto"
+                    className="flex-1 min-w-0 bg-transparent resize-none outline-none px-2 py-1.5 text-[14px] leading-5 max-h-28 overflow-y-auto placeholder:text-outline"
                   />
                   <button
                     type="submit"
                     disabled={sending || !canSend}
-                    className="shrink-0 h-9 px-4 rounded-xl bg-primary text-on-primary text-sm font-semibold disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                    className="ui-btn ui-btn-primary shrink-0 !h-8"
                   >
                     {editingId ? t("chat.saveEdit") : t("chat.send")}
-                    <span className="material-symbols-outlined text-[16px]">
-                      {editingId ? "check" : "send"}
-                    </span>
+                    <Icon name={editingId ? "check" : "send"} className="text-[14px]" />
                   </button>
                 </div>
               </form>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-on-surface-variant text-sm p-8 text-center">
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-on-surface-variant text-[13px] p-8 text-center">
+              <span className="w-10 h-10 rounded-xl border border-white/10 bg-surface-container-high flex items-center justify-center">
+                <Icon name="forum" className="text-[18px]" />
+              </span>
               Pick a church member for a private chat, or open the group channel.
             </div>
           )}
         </section>
+
+        {active ? (
+          <aside
+            aria-label="Conversation details"
+            className="hidden xl:flex flex-col gap-4 min-h-0 overflow-y-auto custom-scrollbar"
+          >
+            <div className="rounded-[14px] border border-white/5 bg-surface-container p-5">
+              <div className="flex flex-col items-center text-center">
+                {active.kind === "dm" ? (
+                  <Avatar name={headerName} url={headerAvatar} size="lg" />
+                ) : headerAvatar ? (
+                  <img src={headerAvatar} alt="" className="w-14 h-14 rounded-xl object-cover border border-white/10" />
+                ) : (
+                  <span className="w-14 h-14 rounded-xl bg-surface-container-high border border-white/10 flex items-center justify-center text-on-surface-variant">
+                    <Icon name="tag" className="text-[22px]" />
+                  </span>
+                )}
+                <p className="mt-3 text-[15px] font-semibold text-on-surface truncate max-w-full">
+                  {headerName}
+                </p>
+                <p className="text-[12px] text-on-surface-variant">
+                  {active.kind === "church" ? "Group channel" : "Direct message"}
+                </p>
+              </div>
+              <dl className="mt-5 space-y-2.5 text-[12px]">
+                {active.kind === "dm" ? (
+                  <>
+                    {active.peer_church_name ? (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-on-surface-variant">Church</dt>
+                        <dd className="text-on-surface truncate">{active.peer_church_name}</dd>
+                      </div>
+                    ) : null}
+                    {active.peer_role ? (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-on-surface-variant">Role</dt>
+                        <dd className="text-on-surface capitalize truncate">{active.peer_role}</dd>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-on-surface-variant">Members</dt>
+                    <dd className="text-on-surface tabular-nums">{channelMembers.length + 1}</dd>
+                  </div>
+                )}
+                <div className="flex justify-between gap-3">
+                  <dt className="text-on-surface-variant">Created</dt>
+                  <dd className="text-on-surface tabular-nums">{createdLabel}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-on-surface-variant">Last activity</dt>
+                  <dd className="text-on-surface">{lastActivity ? formatRelative(lastActivity) : "—"}</dd>
+                </div>
+              </dl>
+            </div>
+
+            {active.kind === "church" ? (
+              <div className="rounded-[14px] border border-white/5 bg-surface-container">
+                <p className="px-5 pt-4 pb-2 text-[13px] font-medium text-on-surface-variant">
+                  Members
+                  <span className="ml-1.5 text-outline tabular-nums">{channelMembers.length + 1}</span>
+                </p>
+                <ul className="pb-2">
+                  <li className="flex items-center gap-2.5 px-5 h-10">
+                    <Avatar name={myName} url={myAvatar} size="xs" />
+                    <span className="text-[13px] text-on-surface truncate flex-1">{myName}</span>
+                    <span className="text-[11px] text-outline">{t("chat.you")}</span>
+                  </li>
+                  {channelMembers.slice(0, 8).map((member) => (
+                    <li key={member.id}>
+                      <button
+                        type="button"
+                        disabled={openingDm}
+                        onClick={() => {
+                          const existing = channels.find(
+                            (row) => row.kind === "dm" && row.peer_user_id === member.id,
+                          );
+                          if (existing) selectChannel(existing.id);
+                          else void startDm(member);
+                        }}
+                        title={`Message ${member.name}`}
+                        className="w-full flex items-center gap-2.5 px-5 h-10 text-left hover:bg-white/[0.03] disabled:opacity-60"
+                      >
+                        <Avatar name={member.name} url={member.avatar_url} size="xs" />
+                        <span className="text-[13px] text-on-surface truncate flex-1">{member.name}</span>
+                        <span className="text-[11px] text-outline capitalize">{member.role}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {channelMembers.length > 8 ? (
+                  <p className="px-5 pb-4 text-[12px] text-on-surface-variant">
+                    +{channelMembers.length - 8} more
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </aside>
+        ) : null}
       </div>
 
       {reactPickerFor && actionAnchor
         ? createPortal(
             <div
               data-msg-actions
-              className="fixed z-[130] flex items-center gap-0.5 rounded-full bg-surface-container-highest border border-white/10 px-1.5 py-1 shadow-xl"
+              className="ui-menu fixed z-[130] flex items-center gap-0.5 !rounded-full !px-1.5 !py-1"
               style={{ top: actionAnchor.top, left: actionAnchor.left }}
             >
               {REACTION_EMOJIS.map((emoji) => (
@@ -2137,12 +2202,12 @@ export default function Chat() {
         ? createPortal(
             <div
               data-msg-actions
-              className="fixed z-[130] min-w-[168px] rounded-xl border border-white/10 bg-surface-container-highest shadow-xl py-1"
+              className="ui-menu fixed z-[130] min-w-[168px] py-1"
               style={{ top: actionAnchor.top, left: actionAnchor.left }}
             >
               <button
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-white/5 flex items-center gap-2"
+                className="w-full text-left px-3 h-8 text-[13px] text-on-surface hover:bg-white/5 flex items-center gap-2"
                 onClick={(event) => {
                   event.stopPropagation();
                   const message = messages.find((row) => row.id === msgMenuFor);
@@ -2151,16 +2216,14 @@ export default function Chat() {
                   if (message) startReply(message);
                 }}
               >
-                <span className="material-symbols-outlined text-[18px]">
-                  reply
-                </span>
+                <Icon name="reply" className="text-[15px] text-on-surface-variant" />
                 {t("chat.reply")}
               </button>
               {messages.find((row) => row.id === msgMenuFor)?.sender_id ===
               me ? (
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-white/5 flex items-center gap-2"
+                  className="w-full text-left px-3 h-8 text-[13px] text-on-surface hover:bg-white/5 flex items-center gap-2"
                   onClick={(event) => {
                     event.stopPropagation();
                     const message = messages.find(
@@ -2171,9 +2234,7 @@ export default function Chat() {
                     if (message) startEdit(message);
                   }}
                 >
-                  <span className="material-symbols-outlined text-[18px]">
-                    edit
-                  </span>
+                  <Icon name="edit" className="text-[15px] text-on-surface-variant" />
                   {t("chat.edit")}
                 </button>
               ) : null}
@@ -2181,7 +2242,7 @@ export default function Chat() {
               me ? (
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm text-[#ffb4ab] hover:bg-white/5 flex items-center gap-2"
+                  className="w-full text-left px-3 h-8 text-[13px] text-error hover:bg-white/5 flex items-center gap-2"
                   onClick={(event) => {
                     event.stopPropagation();
                     const messageId = msgMenuFor;
@@ -2190,9 +2251,7 @@ export default function Chat() {
                     setConfirmDeleteMsg(messageId);
                   }}
                 >
-                  <span className="material-symbols-outlined text-[18px]">
-                    delete
-                  </span>
+                  <Icon name="delete" className="text-[15px]" />
                   {t("chat.delete")}
                 </button>
               ) : null}
@@ -2247,7 +2306,7 @@ export default function Chat() {
                   className="absolute -top-1 right-0 sm:-top-2 sm:-right-2 w-10 h-10 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
                   aria-label="Close"
                 >
-                  <span className="material-symbols-outlined">close</span>
+                  <Icon name="close" />
                 </button>
                 <img
                   src={lightbox.url}

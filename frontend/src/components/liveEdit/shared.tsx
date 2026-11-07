@@ -3,6 +3,7 @@ import type { ChordDisplay } from "../../lib/chordDisplay";
 import type { LyricTextStyle } from "../../lib/lyricTextStyle";
 import type { StageBackgroundId } from "../../lib/stageBackgrounds";
 import type { LiveCue, SetlistItem } from "../../lib/types";
+import Icon from "../Icon";
 
 /** What the edit-mode header calls to save or throw away a panel's unsaved edits. */
 export type EditPanelHandle = {
@@ -83,7 +84,7 @@ export function EditPanelShell({
               title={dirty ? "Shows the last saved version. Save first to show your edits." : undefined}
               className="inline-flex items-center gap-1 px-3 h-8 rounded-lg border border-primary/30 text-primary hover:bg-primary/10 text-[11px] font-semibold disabled:opacity-40"
             >
-              <span className="material-symbols-outlined text-[16px]">cast</span>
+              <Icon name="cast" className="text-[16px]" />
               {showIndex >= 0 && showIndex === liveIndex ? "On screen now" : "Show on screen"}
             </button>
           </div>
